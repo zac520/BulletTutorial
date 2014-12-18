@@ -93,6 +93,9 @@ public class MainScreen implements Screen {
 
     public float rotateAngle = 360f;
 
+    private Vector3 originForVerticalMazeWall;
+    private Vector3 originForHorizontalMazeWall;
+
     public MainScreen(MainGame myGame) {
         //MUST init before we can use bullet
         Bullet.init();
@@ -131,7 +134,7 @@ public class MainScreen implements Screen {
 
         makePlayer();
 
-        makeSquare();
+        createMazeBorder();
 
         //debug drawing
         debugDrawer = new DebugDrawer();
@@ -139,8 +142,28 @@ public class MainScreen implements Screen {
         dynamicsWorld.setDebugDrawer(debugDrawer);
 
     }
+    private void createMazeBorder(){
 
-    private void makeSquare(){
+        //I got confused while writing this, so the x and y's don't make sense but it works. Oh well.
+
+        //create the top and bottom border
+        for(int y = 0; y < GROUND_WIDTH / MAZE_WALL_WIDTH; y++){
+            for(int x = 0; x<=GROUND_HEIGHT/MAZE_WALL_HEIGHT ;x+=GROUND_HEIGHT/MAZE_WALL_HEIGHT) {
+                makeSquare(true, x, y);
+            }
+        }
+
+        //create the side borders
+        for(int y = 0; y < GROUND_WIDTH / MAZE_WALL_WIDTH; y++){
+            for(int x = 0; x<=GROUND_HEIGHT/MAZE_WALL_HEIGHT ;x+=GROUND_HEIGHT/MAZE_WALL_HEIGHT) {
+                makeSquare(false, y, x);
+            }
+        }
+
+    }
+
+
+    private void makeSquare(boolean horizontal, int positionX, int positionY){
         GameObject object = constructors.get("square").construct();
         //object.transform.trn(MathUtils.random(-2.5f, 2.5f), 0f, MathUtils.random(-2.5f, 2.5f));
 
@@ -151,14 +174,32 @@ public class MainScreen implements Screen {
         object.body.setAngularFactor(new Vector3(0, 1, 0));   //make it so it can't tip over
         object.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
 
+        if(horizontal) {
+            //set the rotation
+            object.transform.setToRotation(0, 90, 0, 90);
+            object.body.proceedToTransform(object.transform);//apply the change in position
 
-        object.transform.set(new Vector3(
-                        myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 + MAZE_WALL_WIDTH/2,
-                        myGroundObject.body.getCenterOfMassPosition().y + MAZE_WALL_HEIGHT/2 + GROUND_THICKNESS/2,
-                        0),
-                object.body.getOrientation());//set it to start at 5 so it falls to ground
+            //set the location
+            object.transform.set(new Vector3(
+                            originForHorizontalMazeWall.x + positionX * MAZE_WALL_WIDTH,
+                            originForHorizontalMazeWall.y ,
+                            originForHorizontalMazeWall.z+ positionY * MAZE_WALL_HEIGHT),
+                    object.body.getOrientation());
+            object.body.proceedToTransform(object.transform);//apply the change in position
 
-        object.body.proceedToTransform(object.transform);//apply the change in position
+        }
+        else {
+            //set the location
+            object.transform.set(new Vector3(
+                            originForVerticalMazeWall.x + positionX * MAZE_WALL_WIDTH,
+                            originForVerticalMazeWall.y,
+                            originForVerticalMazeWall.z + positionY * MAZE_WALL_HEIGHT),
+                    object.body.getOrientation());
+            object.body.proceedToTransform(object.transform);//apply the change in position
+
+        }
+
+
 
         //add to rendering instances, and the dynamic world
         instances.add(object);
@@ -201,6 +242,16 @@ public class MainScreen implements Screen {
         myGroundObject.body.setContactCallbackFlag(GROUND_FLAG);
         myGroundObject.body.setContactCallbackFilter(0);
         myGroundObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+
+        //save the originForVerticalMazeWall here, so we can use it later. Saves calculating a bunch of times later
+        originForVerticalMazeWall = new Vector3(
+                myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 + MAZE_WALL_WIDTH/2,
+                myGroundObject.body.getCenterOfMassPosition().y + MAZE_WALL_HEIGHT/2 + GROUND_THICKNESS/2,
+                myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 );
+        originForHorizontalMazeWall = new Vector3(
+                myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 ,
+                myGroundObject.body.getCenterOfMassPosition().y + MAZE_WALL_HEIGHT/2 + GROUND_THICKNESS/2,
+                myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 + MAZE_WALL_HEIGHT/2);
     }
 
     private void applyModels(){
