@@ -39,6 +39,14 @@ public class MainScreen implements Screen {
     ModelBatch modelBatch;
     Environment environment;
 
+    public float GROUND_WIDTH = 100;
+    public float GROUND_HEIGHT = 100;
+    public float GROUND_THICKNESS = 2;
+
+    public float MAZE_WALL_HEIGHT = 10;
+    public float MAZE_WALL_WIDTH = 10;
+    public float MAZE_WALL_THICKNESS=2;
+
     Model model;
     ModelInstance ground;
     ModelInstance ball;
@@ -62,6 +70,9 @@ public class MainScreen implements Screen {
     final static short OBJECT_FLAG = 1<<9;
     final static short ALL_FLAG = -1;
 
+
+
+
     btDynamicsWorld dynamicsWorld;
     btConstraintSolver constraintSolver;
 
@@ -76,7 +87,7 @@ public class MainScreen implements Screen {
     Vector3 characterDirection = new Vector3();
     Vector3 walkDirection = new Vector3();
     GameObject characterObject;
-
+    GameObject myGroundObject;
     DebugDrawer debugDrawer;
     private final Vector3 tmpV1 = new Vector3();
 
@@ -120,11 +131,38 @@ public class MainScreen implements Screen {
 
         makePlayer();
 
+        makeSquare();
+
         //debug drawing
         debugDrawer = new DebugDrawer();
         debugDrawer.setDebugMode(btIDebugDraw.DebugDrawModes.DBG_MAX_DEBUG_DRAW_MODE);
         dynamicsWorld.setDebugDrawer(debugDrawer);
 
+    }
+
+    private void makeSquare(){
+        GameObject object = constructors.get("square").construct();
+        //object.transform.trn(MathUtils.random(-2.5f, 2.5f), 0f, MathUtils.random(-2.5f, 2.5f));
+
+        object.body.setCollisionFlags(object.body.getCollisionFlags()
+                | btCollisionObject.CollisionFlags.CF_STATIC_OBJECT);
+        object.body.setContactCallbackFlag(GROUND_FLAG);
+        object.body.setContactCallbackFilter(0);
+        object.body.setAngularFactor(new Vector3(0, 1, 0));   //make it so it can't tip over
+        object.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+
+
+        object.transform.set(new Vector3(
+                        myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 + MAZE_WALL_WIDTH/2,
+                        myGroundObject.body.getCenterOfMassPosition().y + MAZE_WALL_HEIGHT/2 + GROUND_THICKNESS/2,
+                        0),
+                object.body.getOrientation());//set it to start at 5 so it falls to ground
+
+        object.body.proceedToTransform(object.transform);//apply the change in position
+
+        //add to rendering instances, and the dynamic world
+        instances.add(object);
+        dynamicsWorld.addRigidBody(object.body);
     }
 
     private void makePlayer(){
@@ -134,8 +172,11 @@ public class MainScreen implements Screen {
         characterObject.transform.set(new Vector3(0, 5, 0), characterObject.body.getOrientation());//set it to start at 5 so it falls to ground
         characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
         instances.add(characterObject);//renderable, but no physics
-        characterObject.body.setAngularFactor(new Vector3(0,1,0));   //make it so it can't tip over
+        characterObject.body.setAngularFactor(new Vector3(0, 1, 0));   //make it so it can't tip over
         characterObject.body.setFriction(1);
+        characterObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+
+        instances.add(characterObject);//renderable, but no physics
         dynamicsWorld.addRigidBody(characterObject.body);//physics, but no render
     }
 
@@ -151,38 +192,39 @@ public class MainScreen implements Screen {
 
         //kinematic ground body
         instances = new Array<GameObject>();
-        GameObject object = constructors.get("ground").construct();
-        object.transform.trn(MathUtils.random(-2.5f, 2.5f), -9000f, MathUtils.random(-2.5f, 2.5f));
+        myGroundObject = constructors.get("ground").construct();
 
-        object.body.setCollisionFlags(object.body.getCollisionFlags()
-                | btCollisionObject.CollisionFlags.CF_KINEMATIC_OBJECT);
-        instances.add(object);
-        dynamicsWorld.addRigidBody(object.body);
-        object.body.setContactCallbackFlag(GROUND_FLAG);
-        object.body.setContactCallbackFilter(0);
-        object.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+//        object.body.setCollisionFlags(object.body.getCollisionFlags()
+//                | btCollisionObject.CollisionFlags.CF_KINEMATIC_OBJECT);
+        instances.add(myGroundObject);
+        dynamicsWorld.addRigidBody(myGroundObject.body);
+        myGroundObject.body.setContactCallbackFlag(GROUND_FLAG);
+        myGroundObject.body.setContactCallbackFilter(0);
+        myGroundObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
     }
 
     private void applyModels(){
         //apply those models and put them into a map
         constructors = new ArrayMap<String, GameObject.Constructor>(String.class, GameObject.Constructor.class);
-        constructors.put("ground", new GameObject.Constructor(model, "ground", new btBoxShape(new Vector3(25f, .5f, 25f)), 0f));
+        constructors.put("ground", new GameObject.Constructor(model, "ground", new btBoxShape(new Vector3(GROUND_WIDTH/2, GROUND_THICKNESS/2, GROUND_HEIGHT/2f)), 0f));
         constructors.put("sphere", new GameObject.Constructor(model, "sphere", new btSphereShape(0.5f), 1f));
         constructors.put("box", new GameObject.Constructor(model, "box", new btBoxShape(new Vector3(0.5f, 0.5f, 0.5f)), 1f));
         constructors.put("cone", new GameObject.Constructor(model, "cone", new btConeShape(0.5f, 2f), 1f));
         constructors.put("capsule", new GameObject.Constructor(model, "capsule", new btCapsuleShape(.5f, 1f), 1f));
         constructors.put("cylinder", new GameObject.Constructor(model, "cylinder", new btCylinderShape(new Vector3(.5f, 1f, .5f)), 1f));
+        constructors.put("square", new GameObject.Constructor(model, "square", new btBoxShape(new Vector3(MAZE_WALL_WIDTH/2, MAZE_WALL_HEIGHT/2, MAZE_WALL_THICKNESS/2)), 0f));
+
         instances = new Array<GameObject>();
         instances.add(constructors.get("ground").construct());
     }
     private void defineModels(){
 
-        //set a bunch of things the world will make randomly
+        //set a bunch of things the world will make randomly. These should be twice the size on each x, y, and z property we name for the constructor, due to bullet vs rendering dimensions
         ModelBuilder mb = new ModelBuilder();
         mb.begin();
         mb.node().id = "ground";
-        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.RED)))
-                .box(50f, 1f, 50f);
+        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.TEAL)))
+                .box(GROUND_WIDTH, GROUND_THICKNESS, GROUND_HEIGHT);
         mb.node().id = "sphere";
         mb.part("sphere", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.GREEN)))
                 .sphere(1f, 1f, 1f, 10, 10);
@@ -198,6 +240,10 @@ public class MainScreen implements Screen {
         mb.node().id = "cylinder";
         mb.part("cylinder", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.MAGENTA)))
                 .cylinder(1f, 2f, 1f, 10);
+
+        mb.node().id = "square";
+        mb.part("square", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.RED)))
+                .box(MAZE_WALL_WIDTH, MAZE_WALL_HEIGHT, MAZE_WALL_THICKNESS);
         model = mb.end();
     }
 
@@ -235,10 +281,8 @@ public class MainScreen implements Screen {
         final float myDelta = Math.min(1f / 30f, delta);
 
         //move the ground
-        angle = (angle + myDelta * speed) % 360f;
-        instances.get(0).transform.setTranslation(0, MathUtils.sinDeg(angle) * 2.5f, 0f);//activate TO MOVE BOX UP AND DOWN
-        //instances.get(0).body.setWorldTransform(instances.get(0).transform);
-        //instances.get(0).body.activate();//wake up the sleeping object(not necessary because we deactivated that flag on creation)
+//        angle = (angle + myDelta * speed) % 360f;
+//        instances.get(0).transform.setTranslation(0, MathUtils.sinDeg(angle) * 2.5f, 0f);//activate TO MOVE BOX UP AND DOWN
 
 
         update();
@@ -247,10 +291,10 @@ public class MainScreen implements Screen {
 
         dynamicsWorld.stepSimulation(myDelta, 5, 1f/60f);
 
-        if ((spawnTimer -= myDelta) < 0) {
-            spawn();
-            spawnTimer = 1.5f;
-        }
+//        if ((spawnTimer -= myDelta) < 0) {
+//            spawn();
+//            spawnTimer = 1.5f;
+//        }
 
     }
 
@@ -281,6 +325,10 @@ public class MainScreen implements Screen {
                     characterObject.body.getAngularVelocity().z,
                     characterObject.body.getAngularVelocity().y + zDirection*40));
 
+            //move the camera appropriately
+            //centerPlayerOnScreen();
+
+
         }
         if (Gdx.input.isKeyPressed(Input.Keys.DOWN)) {
 
@@ -293,6 +341,9 @@ public class MainScreen implements Screen {
                     characterObject.body.getAngularVelocity().x + xDirection*40,
                     characterObject.body.getAngularVelocity().z,
                     characterObject.body.getAngularVelocity().y + zDirection*40));
+
+            //move the camera appropriately
+            //centerPlayerOnScreen();
 
         }
         if (Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
