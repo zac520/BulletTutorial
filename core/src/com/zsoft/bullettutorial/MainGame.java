@@ -22,17 +22,24 @@ import com.badlogic.gdx.utils.ArrayMap;
 import com.badlogic.gdx.utils.Disposable;
 import com.zsoft.bullettutorial.Screens.MainScreen;
 
+import java.util.Random;
+
 public class MainGame extends Game {
 
 	public int SCREEN_WIDTH = 360;
 	public int SCREEN_HEIGHT = 480;
 	public int BANNER_DIP_HEIGHT;
 
+	public Random rand;
+
 	@Override
 	public void create () {
 
 		SCREEN_WIDTH = Gdx.graphics.getWidth();
 		SCREEN_HEIGHT = Gdx.graphics.getHeight()-BANNER_DIP_HEIGHT;
+
+		//seed the randomizer
+		rand = new Random();//seed this for any variable thing to use later
 
 		setScreen(new MainScreen(this));
 

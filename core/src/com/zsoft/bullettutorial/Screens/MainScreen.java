@@ -2,11 +2,10 @@ package com.zsoft.bullettutorial.Screens;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
+import com.badlogic.gdx.InputMultiplexer;
 import com.badlogic.gdx.Screen;
-import com.badlogic.gdx.graphics.Color;
-import com.badlogic.gdx.graphics.GL20;
-import com.badlogic.gdx.graphics.PerspectiveCamera;
-import com.badlogic.gdx.graphics.VertexAttributes;
+import com.badlogic.gdx.graphics.*;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g3d.*;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
@@ -14,16 +13,21 @@ import com.badlogic.gdx.graphics.g3d.utils.CameraInputController;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.physics.bullet.Bullet;
 import com.badlogic.gdx.physics.bullet.DebugDrawer;
 import com.badlogic.gdx.physics.bullet.collision.*;
 import com.badlogic.gdx.physics.bullet.dynamics.*;
 import com.badlogic.gdx.physics.bullet.linearmath.btIDebugDraw;
 import com.badlogic.gdx.physics.bullet.linearmath.btMotionState;
+import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ArrayMap;
 import com.badlogic.gdx.utils.Disposable;
+import com.zsoft.bullettutorial.Helpers.GameObject;
 import com.zsoft.bullettutorial.MainGame;
 
 /**
@@ -39,13 +43,35 @@ public class MainScreen implements Screen {
     ModelBatch modelBatch;
     Environment environment;
 
-    public float GROUND_WIDTH = 100;
-    public float GROUND_HEIGHT = 100;
-    public float GROUND_THICKNESS = 2;
+    public float GROUND_WIDTH = 200;
+    public float GROUND_HEIGHT = 200;
+    public float GROUND_THICKNESS = 10f;
 
-    public float MAZE_WALL_HEIGHT = 10;
-    public float MAZE_WALL_WIDTH = 10;
-    public float MAZE_WALL_THICKNESS=2;
+    public float MAZE_WALL_HEIGHT = 10f;
+    public float MAZE_WALL_WIDTH = 10f;
+    public float MAZE_WALL_THICKNESS=1f;
+
+    public float PLAYER_HEIGHT = 1;
+    public float PlAYER_RADIUS = 0.25f;
+    public int PLAYER_DIVISIONS = 10;
+    public float PLAYER_MASS = 1f;
+
+    public int totalVisitedSquares;
+    public int blocksHigh = (int) (GROUND_HEIGHT / MAZE_WALL_HEIGHT);
+    public int blocksWide = (int) (GROUND_WIDTH / MAZE_WALL_HEIGHT);
+    public int totalSquaresToVisit;
+    Array<Vector2> positionStack;
+    public int lastMovementDirection;
+    private int [][] visitedSquares;
+    private int currentDistance;
+    private int longestDistance;
+    private Vector2 longestDistanceLocation;
+
+    private int [][] verticalMazeWalls;
+    private int [][] horizontalMazeWalls;
+
+    private BoundingBox bounds = new BoundingBox();
+
 
     Model model;
     ModelInstance ground;
@@ -70,7 +96,11 @@ public class MainScreen implements Screen {
     final static short OBJECT_FLAG = 1<<9;
     final static short ALL_FLAG = -1;
 
-
+    protected Stage stage;
+    protected Label label;
+    protected BitmapFont font;
+    private int visibleCount;
+    private Vector3 position = new Vector3();
 
 
     btDynamicsWorld dynamicsWorld;
@@ -96,6 +126,11 @@ public class MainScreen implements Screen {
     private Vector3 originForVerticalMazeWall;
     private Vector3 originForHorizontalMazeWall;
 
+    protected StringBuilder stringBuilder;
+
+    HUD userInterfaceStage;
+    OrthographicCamera HUDCam;
+
     public MainScreen(MainGame myGame) {
         //MUST init before we can use bullet
         Bullet.init();
@@ -116,9 +151,7 @@ public class MainScreen implements Screen {
         cam.lookAt(0, 4f, 0);
         cam.update();
 
-        //allow for user control (user can fly the camera)
-        camController = new CameraInputController(cam);
-        Gdx.input.setInputProcessor(camController);
+
 
         defineModels();
 
@@ -132,16 +165,298 @@ public class MainScreen implements Screen {
 
         makeGround();
 
-        makePlayer();
-
         createMazeBorder();
+
+        //initialize the visited array
+        visitedSquares = new int[blocksWide][blocksHigh];
+        zeroOutVisitedArray();
+
+        initializeMazeWallArrays();
+
+        createMazeWithoutRecursion();
+
+        createAllMazeWalls();
+
+        makePlayer();
 
         //debug drawing
         debugDrawer = new DebugDrawer();
         debugDrawer.setDebugMode(btIDebugDraw.DebugDrawModes.DBG_MAX_DEBUG_DRAW_MODE);
         dynamicsWorld.setDebugDrawer(debugDrawer);
 
+        //set up some stuff for the frustrum culling
+        stage = new Stage();
+        font = new BitmapFont();
+        label = new Label(" ", new Label.LabelStyle(font, Color.WHITE));
+        stage.addActor(label);
+        stringBuilder = new StringBuilder();
+
+        //set up the UI cam with its own separate stage
+
+        HUDCam =new OrthographicCamera();
+        HUDCam.setToOrtho(false, game.SCREEN_WIDTH, game.SCREEN_HEIGHT);
+        userInterfaceStage =new HUD(game, this);
+        //game.userInterfaceStage = userInterfaceStage;//we have to set it here because it needs a copy of this gamescreen
+        userInterfaceStage.getViewport().setCamera(HUDCam);
+
+
+        //allow for user control (user can fly the camera)
+        camController = new CameraInputController(cam);
+        Gdx.input.setInputProcessor(new InputMultiplexer(userInterfaceStage, camController));
+
     }
+
+    private void createAllMazeWalls(){
+        for(int x = 0; x < horizontalMazeWalls.length; x++){
+            for(int y = 0; y<horizontalMazeWalls[x].length ;y++) {
+                if(horizontalMazeWalls[x][y]==1) {
+                    makeSquare(true, x, y);
+                }
+            }
+        }
+
+        for(int x = 0; x < verticalMazeWalls.length; x++){
+            for(int y = 0; y<verticalMazeWalls[x].length ;y++) {
+                if(verticalMazeWalls[x][y]==1) {
+                    makeSquare(false, x, y);
+                }
+            }
+        }
+    }
+
+
+
+    private void zeroOutVisitedArray(){
+        //initialize the visited array
+        for (int x = 0; x < blocksWide; x++) {
+            for (int y = 0; y < blocksHigh; y++) {
+                //make all as zero to represent false, or unvisited
+                visitedSquares[x][y] = 0;
+            }
+        }
+    }
+
+    private void initializeMazeWallArrays(){
+        //initialize the arrays
+        verticalMazeWalls = new int[blocksWide][blocksHigh];
+        horizontalMazeWalls = new int[blocksWide][blocksHigh];
+
+        //start them all as walls, and we will delete them as we go. After the calculations, we will create only what is left
+        for (int x = 0; x < blocksWide; x++) {
+            for (int y = 0; y < blocksHigh; y++) {
+                //make all as 1. As we traverse, we will delete the unneeded walls
+                verticalMazeWalls[x][y] = 1;
+                horizontalMazeWalls[x][y] = 1;
+            }
+        }
+
+
+
+    }
+
+    private void createMazeWithoutRecursion(){
+        //had to do it without recursion because stack is way too large to make a maze
+
+        //reset the visited squares for calculation
+        totalVisitedSquares =0;
+
+
+        //calculate the total number of squares to visit
+        totalSquaresToVisit = blocksHigh * blocksWide;
+
+        //put us at position 0,0, and mark that square as visited
+        Vector2 currentPosition = new Vector2(0, blocksHigh-1);
+        //visitedSquares[0][blocksHigh-1] = 1;
+
+        positionStack = new Array<Vector2>();
+        int nextSquareDirection;
+        int biasDecider;
+        positionStack.add(currentPosition);
+        while (positionStack.size > 0) {
+
+            //to make longer walls, will randomly give a bias for using the last direction
+            biasDecider = game.rand.nextInt((6 - 1) + 1) + 1;//1,2,3, or 4 or 5
+
+            if(biasDecider<5){
+                nextSquareDirection = lastMovementDirection;
+            }
+            else {
+                //choose a random direction
+                nextSquareDirection = game.rand.nextInt((5 - 1) + 1) + 1;//1,2,3, or 4
+            }
+            switch (nextSquareDirection) {
+                case 1:
+                    //if it's too high, or we have already visited that square then check the next direction
+                    if ((currentPosition.y + 1 > blocksHigh - 1) || (visitedSquares[(int) currentPosition.x][(int) currentPosition.y + 1] == 1)) {
+                        break;
+                    }
+                    //if it isn't too high, then add to the stack, and check everything again from there
+                    else {
+                        //remove the wall from our vertical array
+                        verticalMazeWalls[(int) currentPosition.x ][(int) currentPosition.y+1] = 0;
+
+                        //travel to that spot now that we can get there
+                        currentPosition.y += 1;
+
+                        //add to the current distance
+                        currentDistance +=1;
+
+                        //add the current position to the stack
+                        positionStack.add(new Vector2(currentPosition));
+
+                        //add to the total squares visited
+                        totalVisitedSquares +=1;
+
+                        //save our direction for use in tweaking the maze
+                        lastMovementDirection = 1;
+                    }
+
+                    break;
+                case 2:
+
+
+                    //if it's too high, or we have already visited that square then check the next direction
+                    if ((currentPosition.x + 1 > blocksWide - 1) || (visitedSquares[(int) currentPosition.x + 1][(int) currentPosition.y] == 1)) {
+                        break;
+                    }
+                    //if it isn't too high, then add to the stack, and check everything again from there
+                    else {
+                        //remove the wall from our vertical array
+                        horizontalMazeWalls[(int) currentPosition.x +1][(int) currentPosition.y] = 0;
+
+                        //travel to that spot now that we can get there
+                        currentPosition.x += 1;
+
+                        //add to the current distance
+                        currentDistance +=1;
+
+                        //add the current position to the stack
+                        positionStack.add(new Vector2(currentPosition));
+
+                        //add to the total squares visited
+                        totalVisitedSquares +=1;
+
+                        //save our direction for use in tweaking the maze
+                        lastMovementDirection = 2;
+                    }
+
+
+                    break;
+                case 3:
+
+
+                    //if it's too low, or we have already visited that square then check the next direction
+                    if ((currentPosition.y - 1 < 0) || (visitedSquares[(int) currentPosition.x][(int) currentPosition.y - 1] == 1)) {
+                        break;
+                    }
+                    //if it isn't too high, then add to the stack, and check everything again from there
+                    else {
+                        //remove the wall from our vertical array
+                        verticalMazeWalls[(int) currentPosition.x ][(int) currentPosition.y] = 0;
+
+                        //travel to that spot now that we can get there
+                        currentPosition.y -= 1;
+
+                        //add to the current distance
+                        currentDistance +=1;
+
+                        //add the current position to the stack
+                        positionStack.add(new Vector2(currentPosition));
+
+                        //add to the total squares visited
+                        totalVisitedSquares +=1;
+
+                        //save our direction for use in tweaking the maze
+                        lastMovementDirection = 3;
+                    }
+
+                    break;
+                case 4:
+
+
+                    //if it's too high, or we have already visited that square then check the next direction
+                    if ((currentPosition.x - 1 < 0) || (visitedSquares[(int) currentPosition.x - 1][(int) currentPosition.y] == 1)) {
+                        break;
+                    }
+                    //if it isn't too high, then add to the stack, and check everything again from there
+                    else {
+
+                        //remove the wall from our vertical array
+                        horizontalMazeWalls[(int) currentPosition.x ][(int) currentPosition.y] = 0;
+
+                        //travel to that spot now that we can get there
+                        currentPosition.x -= 1;
+
+                        //add to the current distance
+                        currentDistance +=1;
+
+                        //add the current position to the stack
+                        positionStack.add(new Vector2(currentPosition));
+
+                        //add to the total squares visited
+                        totalVisitedSquares +=1;
+
+                        //save our direction for use in tweaking the maze
+                        lastMovementDirection = 4;
+                    }
+
+                    break;
+                default:
+                    break;
+            }
+
+
+            visitedSquares[(int)currentPosition.x][(int)currentPosition.y] = 1;
+
+
+            //now that we have checked our random integer, check all of the other directions. If they all pass, pop off stack
+            if (deadEndCheck(currentPosition)) {
+
+                //check to see if this is the longest current spot, if so, make a note of it
+                if (currentDistance > longestDistance){
+                    longestDistance = currentDistance;
+                    longestDistanceLocation = currentPosition;
+                }
+
+                //remove one from the current distance
+                currentDistance -=1;
+                //go back to the previous position
+                currentPosition = positionStack.pop();
+
+            }
+
+
+        }
+
+        //create the end at the longest recorded location
+        //createEnd((int)longestDistanceLocation.x, (int) longestDistanceLocation.y);
+
+        //reset the loading progress to 0 so we don't print it anywhere.
+        //game.loadingProgressPercent = 0;
+
+    }
+
+    public boolean deadEndCheck(Vector2 currentPosition){
+
+        //check the surrounding areas. If any are reachable, then return false. Else return true;
+        if ((currentPosition.y + 1 < blocksHigh) && (visitedSquares[(int) currentPosition.x][(int) currentPosition.y + 1] == 0)) {
+            return false;
+        }
+        if ((currentPosition.x + 1 < blocksWide) && (visitedSquares[(int) currentPosition.x + 1][(int) currentPosition.y] == 0)) {
+            return false;
+        }
+        if ((currentPosition.y - 1 > 0) && (visitedSquares[(int) currentPosition.x][(int) currentPosition.y - 1] == 0)) {
+            return false;
+        }
+        if ((currentPosition.x - 1 > 0) && (visitedSquares[(int) currentPosition.x - 1][(int) currentPosition.y] == 0)) {
+            return false;
+        }
+        return true;
+    }
+
+
+
+
     private void createMazeBorder(){
 
         //I got confused while writing this, so the x and y's don't make sense but it works. Oh well.
@@ -164,6 +479,7 @@ public class MainScreen implements Screen {
 
 
     private void makeSquare(boolean horizontal, int positionX, int positionY){
+
         GameObject object = constructors.get("square").construct();
         //object.transform.trn(MathUtils.random(-2.5f, 2.5f), 0f, MathUtils.random(-2.5f, 2.5f));
 
@@ -175,31 +491,44 @@ public class MainScreen implements Screen {
         object.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
 
         if(horizontal) {
+
+            //set the transform
+            Vector3 newTransform = new Vector3(
+                    originForHorizontalMazeWall.x + positionX * MAZE_WALL_WIDTH,
+                    originForHorizontalMazeWall.y ,
+                    originForHorizontalMazeWall.z+ positionY * MAZE_WALL_HEIGHT);
+
+
             //set the rotation
             object.transform.setToRotation(0, 90, 0, 90);
             object.body.proceedToTransform(object.transform);//apply the change in position
 
             //set the location
-            object.transform.set(new Vector3(
-                            originForHorizontalMazeWall.x + positionX * MAZE_WALL_WIDTH,
-                            originForHorizontalMazeWall.y ,
-                            originForHorizontalMazeWall.z+ positionY * MAZE_WALL_HEIGHT),
+            object.transform.set(newTransform,
                     object.body.getOrientation());
             object.body.proceedToTransform(object.transform);//apply the change in position
+            object.center = newTransform;
 
         }
         else {
+
+            //transform
+            Vector3 newTransform = new Vector3(
+                    originForVerticalMazeWall.x + positionX * MAZE_WALL_WIDTH,
+                    originForVerticalMazeWall.y,
+                    originForVerticalMazeWall.z + positionY * MAZE_WALL_HEIGHT);
+
             //set the location
-            object.transform.set(new Vector3(
-                            originForVerticalMazeWall.x + positionX * MAZE_WALL_WIDTH,
-                            originForVerticalMazeWall.y,
-                            originForVerticalMazeWall.z + positionY * MAZE_WALL_HEIGHT),
+            object.transform.set(newTransform,
                     object.body.getOrientation());
             object.body.proceedToTransform(object.transform);//apply the change in position
+            object.center = object.model.calculateBoundingBox(bounds).getCenter(object.center);
+            object.center = newTransform;
 
         }
 
 
+        object.bounds = object.calculateBoundingBox(object.bounds).mul(object.transform);
 
         //add to rendering instances, and the dynamic world
         instances.add(object);
@@ -208,12 +537,15 @@ public class MainScreen implements Screen {
 
     private void makePlayer(){
         //create a cone character
-        characterObject = constructors.get("cone").construct();
+        characterObject = constructors.get("capsule").construct();
         characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
-        characterObject.transform.set(new Vector3(0, 5, 0), characterObject.body.getOrientation());//set it to start at 5 so it falls to ground
+        characterObject.transform.set(new Vector3(
+                originForHorizontalMazeWall.x,
+                20,
+                originForHorizontalMazeWall.y), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
         characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
         instances.add(characterObject);//renderable, but no physics
-        characterObject.body.setAngularFactor(new Vector3(0, 1, 0));   //make it so it can't tip over
+        characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
         characterObject.body.setFriction(1);
         characterObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
 
@@ -242,16 +574,17 @@ public class MainScreen implements Screen {
         myGroundObject.body.setContactCallbackFlag(GROUND_FLAG);
         myGroundObject.body.setContactCallbackFilter(0);
         myGroundObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+        myGroundObject.body.setFriction(2);
 
         //save the originForVerticalMazeWall here, so we can use it later. Saves calculating a bunch of times later
         originForVerticalMazeWall = new Vector3(
-                myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 + MAZE_WALL_WIDTH/2,
+                myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 + MAZE_WALL_WIDTH/2 ,
                 myGroundObject.body.getCenterOfMassPosition().y + MAZE_WALL_HEIGHT/2 + GROUND_THICKNESS/2,
-                myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 );
+                myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 /*- MAZE_WALL_THICKNESS/2*/ );
         originForHorizontalMazeWall = new Vector3(
-                myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 ,
+                myGroundObject.body.getCenterOfMassPosition().x-GROUND_WIDTH/2 /*+ MAZE_WALL_THICKNESS/2*/ ,
                 myGroundObject.body.getCenterOfMassPosition().y + MAZE_WALL_HEIGHT/2 + GROUND_THICKNESS/2,
-                myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 + MAZE_WALL_HEIGHT/2);
+                myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 + MAZE_WALL_HEIGHT/2 );
     }
 
     private void applyModels(){
@@ -261,7 +594,7 @@ public class MainScreen implements Screen {
         constructors.put("sphere", new GameObject.Constructor(model, "sphere", new btSphereShape(0.5f), 1f));
         constructors.put("box", new GameObject.Constructor(model, "box", new btBoxShape(new Vector3(0.5f, 0.5f, 0.5f)), 1f));
         constructors.put("cone", new GameObject.Constructor(model, "cone", new btConeShape(0.5f, 2f), 1f));
-        constructors.put("capsule", new GameObject.Constructor(model, "capsule", new btCapsuleShape(.5f, 1f), 1f));
+        constructors.put("capsule", new GameObject.Constructor(model, "capsule", new btCapsuleShape(PlAYER_RADIUS/2, PLAYER_HEIGHT/2), PLAYER_MASS));
         constructors.put("cylinder", new GameObject.Constructor(model, "cylinder", new btCylinderShape(new Vector3(.5f, 1f, .5f)), 1f));
         constructors.put("square", new GameObject.Constructor(model, "square", new btBoxShape(new Vector3(MAZE_WALL_WIDTH/2, MAZE_WALL_HEIGHT/2, MAZE_WALL_THICKNESS/2)), 0f));
 
@@ -287,7 +620,8 @@ public class MainScreen implements Screen {
                 .cone(1f, 2f, 1f, 10);
         mb.node().id = "capsule";
         mb.part("capsule", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.CYAN)))
-                .capsule(0.5f, 2f, 10);
+                .capsule(PlAYER_RADIUS, PLAYER_HEIGHT, PLAYER_DIVISIONS);
+
         mb.node().id = "cylinder";
         mb.part("cylinder", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.MAGENTA)))
                 .cylinder(1f, 2f, 1f, 10);
@@ -320,14 +654,21 @@ public class MainScreen implements Screen {
 
         //rendered drawing
         modelBatch.begin(cam);
-        modelBatch.render(instances, environment);
+        //modelBatch.render(instances, environment);
+
+        visibleCount = 0;
+        for (final GameObject instance : instances) {//only render if it is visible
+            if (instance.isVisible(cam,instance)) {
+                modelBatch.render(instance, environment);
+                visibleCount++;
+            }
+        }
         modelBatch.end();
 
-
         //debug drawing
-		debugDrawer.begin(cam);
-		dynamicsWorld.debugDrawWorld();
-		debugDrawer.end();
+//		debugDrawer.begin(cam);
+//		dynamicsWorld.debugDrawWorld();
+//		debugDrawer.end();
 
         final float myDelta = Math.min(1f / 30f, delta);
 
@@ -347,9 +688,23 @@ public class MainScreen implements Screen {
 //            spawnTimer = 1.5f;
 //        }
 
+        //these are used for testing
+        stringBuilder.setLength(0);
+        stringBuilder.append(" FPS: ").append(Gdx.graphics.getFramesPerSecond());
+        stringBuilder.append(" Visible: ").append(visibleCount);
+        //stringBuilder.append(" Selected: ").append(selected);
+        label.setText(stringBuilder);
+        stage.draw();
+
+        //render the UI stage
+        userInterfaceStage.act(delta);
+        userInterfaceStage.draw();
+
     }
 
 
+    //TODO make an input listener and myInput class separate
+    public boolean forward = false;
     public void update () {
 //		// If the left or right key is pressed, rotate the character and update its physics update accordingly.
 
@@ -407,6 +762,19 @@ public class MainScreen implements Screen {
             cam.rotateAround(characterObject.body.getCenterOfMassPosition(), Vector3.Y, -0.005f * rotateAngle);
             cam.update();
         }
+
+        //this is temporary. Another class will edit this.
+        if(forward){
+            //get the angles we are facing
+            xDirection = cam.direction.x;
+            zDirection = cam.direction.z;
+
+            //apply the force to the character
+            characterObject.body.applyCentralForce(new Vector3(
+                    characterObject.body.getAngularVelocity().x + xDirection*40,
+                    characterObject.body.getAngularVelocity().z,
+                    characterObject.body.getAngularVelocity().y + zDirection*40));
+        }
     }
 
     public void centerPlayerOnScreen(){
@@ -450,65 +818,8 @@ public class MainScreen implements Screen {
 
 
     }
-    static class MyMotionState extends btMotionState {
-        Matrix4 transform;
-        @Override
-        public void getWorldTransform (Matrix4 worldTrans) {
-            worldTrans.set(transform);
-        }
-        @Override
-        public void setWorldTransform (Matrix4 worldTrans) {
-            transform.set(worldTrans);
-        }
-    }
-    static class GameObject extends ModelInstance implements Disposable {
 
-        public final btRigidBody body;
-        public final MyMotionState motionState;
 
-        public GameObject (Model model, String node, btRigidBody.btRigidBodyConstructionInfo constructionInfo) {
-            super(model, node);
-            motionState = new MyMotionState();
-            motionState.transform = transform;
-            body = new btRigidBody(constructionInfo);
-            body.setMotionState(motionState);
-        }
-
-        @Override
-        public void dispose () {
-            body.dispose();
-            motionState.dispose();
-        }
-
-        static class Constructor implements Disposable {
-            public final Model model;
-            public final String node;
-            public final btCollisionShape shape;
-            public final btRigidBody.btRigidBodyConstructionInfo constructionInfo;
-            private static Vector3 localInertia = new Vector3();
-
-            public Constructor (Model model, String node, btCollisionShape shape, float mass) {
-                this.model = model;
-                this.node = node;
-                this.shape = shape;
-                if (mass > 0f)
-                    shape.calculateLocalInertia(mass, localInertia);
-                else
-                    localInertia.set(0, 0, 0);
-                this.constructionInfo = new btRigidBody.btRigidBodyConstructionInfo(mass, null, shape, localInertia);
-            }
-
-            public GameObject construct () {
-                return new GameObject(model, node, constructionInfo);
-            }
-
-            @Override
-            public void dispose () {
-                shape.dispose();
-                constructionInfo.dispose();
-            }
-        }
-    }
 
 
     @Override public void dispose () {
