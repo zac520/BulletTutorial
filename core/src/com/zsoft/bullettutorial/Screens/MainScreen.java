@@ -4,14 +4,16 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputMultiplexer;
 import com.badlogic.gdx.Screen;
+import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g3d.*;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
+import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
-import com.badlogic.gdx.graphics.g3d.utils.CameraInputController;
-import com.badlogic.gdx.graphics.g3d.utils.DefaultShaderProvider;
-import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
+import com.badlogic.gdx.graphics.g3d.model.NodePart;
+import com.badlogic.gdx.graphics.g3d.shaders.DefaultShader;
+import com.badlogic.gdx.graphics.g3d.utils.*;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
@@ -137,6 +139,12 @@ public class MainScreen implements Screen {
     HUD userInterfaceStage;
     OrthographicCamera HUDCam;
 
+    private Texture texture;
+
+    public Renderable renderable;
+    public DefaultShader shader;
+    public RenderContext renderContext;
+
     public MainScreen(MainGame myGame) {
         //MUST init before we can use bullet
         Bullet.init();
@@ -159,11 +167,21 @@ public class MainScreen implements Screen {
 
 
 
+
+        //set up the texture for the walls
+        FileHandle imageFileHandle = Gdx.files.internal("assets/concrete.jpg");
+        texture = new Texture(imageFileHandle);
+        texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Nearest);
+        texture.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.Repeat);
+
         defineModels();
 
         applyModels();
 
         makeWorld();
+
+
+
 
         //this is used to set the color of the objects when they hit the ground
         contactListener = new MyContactListener();
@@ -212,6 +230,18 @@ public class MainScreen implements Screen {
         camController = new CameraInputController(cam);
         Gdx.input.setInputProcessor(new InputMultiplexer(userInterfaceStage, camController));
 
+
+        //set the texture up
+        NodePart blockPart = myFinishedModel.getNode("node1").parts.get(0);
+        renderable = new Renderable();
+        blockPart.setRenderable(renderable);
+        renderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
+        renderable.environment = environment;
+        renderable.worldTransform.idt();
+        renderContext = new RenderContext(new DefaultTextureBinder(DefaultTextureBinder.WEIGHTED, 1));
+        shader = new DefaultShader(renderable);
+        shader.init();
+        //renderable.primitiveType = GL20.GL_POINTS;
     }
 
     Mesh oneMesh;
@@ -243,15 +273,19 @@ public class MainScreen implements Screen {
         //oneMesh = Mesh.create(true, testMeshes,testTransforms);
         myFinishedModel = convertMeshToModel("node1", oneMesh);
 
+        myFinishedModel.nodes.get(0).parts.get(0).material.clear();
+        myFinishedModel.nodes.get(0).parts.get(0).material.set(new TextureAttribute(TextureAttribute.Ambient, texture));
         finishedInstance = new ModelInstance(myFinishedModel, "node1");
 
+        //set the texture
+        //finishedInstance.nodes.get(0).parts.get(0).material.set(new TextureAttribute(TextureAttribute.Ambient, texture));
 
     }
 
     public Model convertMeshToModel(final String id, final Mesh mesh) {
         ModelBuilder builder = new ModelBuilder();
         builder.begin();
-        builder.part(id, mesh, GL20.GL_TRIANGLES, new Material());
+        builder.part(id, mesh, GL20.GL_TRIANGLES, new Material(new TextureAttribute(TextureAttribute.Ambient, texture)));
         return builder.end();
     }
 
@@ -728,7 +762,7 @@ public class MainScreen implements Screen {
             object.transform.set(newTransform,
                     object.body.getOrientation());
             object.body.proceedToTransform(object.transform);//apply the change in position
-            object.center = object.model.calculateBoundingBox(bounds).getCenter(object.center);
+            //object.center = object.model.calculateBoundingBox(bounds).getCenter(object.center);
             //object.center = newTransform;
 
         }
@@ -743,7 +777,14 @@ public class MainScreen implements Screen {
 
     private void makePlayer(){
         //create a cone character
+
+        Texture tex = new Texture(Gdx.files.internal("assets/badlogic.jpg"));
+        tex.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.ClampToEdge);
+
         characterObject = constructors.get("capsule").construct();
+        characterObject.nodes.get(0).parts.get(0).material.clear();
+        characterObject.nodes.get(0).parts.get(0).material.set(new Material( new TextureAttribute(TextureAttribute.Ambient, tex)));
+
         characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
         characterObject.transform.set(new Vector3(
                 originForHorizontalMazeWall.x*0,
@@ -753,6 +794,7 @@ public class MainScreen implements Screen {
         characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
         characterObject.body.setFriction(1);
         characterObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+
 
         //instances.add(characterObject);//renderable, but no physics
         dynamicsWorld.addRigidBody(characterObject.body);//physics, but no render
@@ -811,32 +853,32 @@ public class MainScreen implements Screen {
         ModelBuilder mb = new ModelBuilder();
         mb.begin();
         mb.node().id = "ground";
-        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material())
+        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal | VertexAttributes.Usage.TextureCoordinates, new Material())
                 .box(GROUND_WIDTH, GROUND_THICKNESS, GROUND_HEIGHT);
-        mb.node().id = "sphere";
-        mb.part("sphere", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.GREEN)))
-                .sphere(1f, 1f, 1f, 10, 10);
-        mb.node().id = "box";
-        mb.part("box", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.BLUE)))
-                .box(1f, 1f, 1f);
-        mb.node().id = "cone";
-        mb.part("cone", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.YELLOW)))
-                .cone(1f, 2f, 1f, 10);
+//        mb.node().id = "sphere";
+//        mb.part("sphere", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.GREEN)))
+//                .sphere(1f, 1f, 1f, 10, 10);
+//        mb.node().id = "box";
+//        mb.part("box", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.BLUE)))
+//                .box(1f, 1f, 1f);
+//        mb.node().id = "cone";
+//        mb.part("cone", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.YELLOW)))
+//                .cone(1f, 2f, 1f, 10);
         mb.node().id = "capsule";
-        mb.part("capsule", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal , new Material(ColorAttribute.createDiffuse(Color.CYAN)))
+        mb.part("capsule", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal | VertexAttributes.Usage.TextureCoordinates , new Material(ColorAttribute.createDiffuse(Color.CYAN)))
                 .capsule(PlAYER_RADIUS, PLAYER_HEIGHT, PLAYER_DIVISIONS);
 
-        mb.node().id = "cylinder";
-        mb.part("cylinder", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.MAGENTA)))
-                .cylinder(1f, 2f, 1f, 10);
+//        mb.node().id = "cylinder";
+//        mb.part("cylinder", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.MAGENTA)))
+//                .cylinder(1f, 2f, 1f, 10);
 
-        mb.node().id = "square";
 
         model = mb.end();
 
         ModelBuilder mb2 = new ModelBuilder();
         mb2.begin();
-        mb2.part("square", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.RED)))
+        mb2.node().id = "square";
+        mb2.part("square", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal | VertexAttributes.Usage.TextureCoordinates , new Material(ColorAttribute.createDiffuse(Color.RED)))
                 .box(MAZE_WALL_WIDTH, MAZE_WALL_HEIGHT, MAZE_WALL_THICKNESS);
         squareModel = mb2.end();
 
@@ -865,6 +907,9 @@ public class MainScreen implements Screen {
         Gdx.gl.glEnable(GL20.GL_CULL_FACE);
 
 
+        //enable textures
+        Gdx.gl20.glEnable(GL20.GL_TEXTURE_2D);
+
         //rendered drawing
         modelBatch.begin(cam);
         //modelBatch.render(instances, environment);
@@ -880,10 +925,20 @@ public class MainScreen implements Screen {
 
 
         //render the player
-        modelBatch.render(finishedInstance, environment);
+        //modelBatch.render(finishedInstance, environment);
         modelBatch.render(characterObject, environment);
 
         modelBatch.end();
+
+//        texture.bind();
+//        oneMesh.render(shader.program,0,3,3,true);
+
+
+        renderContext.begin();
+        shader.begin(cam, renderContext);
+        shader.render(renderable);
+        shader.end();
+        renderContext.end();
 
         //debug drawing
 //		debugDrawer.begin(cam);
@@ -1062,6 +1117,8 @@ public class MainScreen implements Screen {
 
         dynamicsWorld.dispose();
         constraintSolver.dispose();
+        Gdx.gl20.glDisable(GL20.GL_TEXTURE_2D);
+
     }
     @Override public void pause () {}
     @Override public void resume () {}
