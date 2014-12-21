@@ -10,6 +10,7 @@ import com.badlogic.gdx.graphics.g3d.*;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
 import com.badlogic.gdx.graphics.g3d.utils.CameraInputController;
+import com.badlogic.gdx.graphics.g3d.utils.DefaultShaderProvider;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
@@ -30,6 +31,9 @@ import com.badlogic.gdx.utils.Disposable;
 import com.zsoft.bullettutorial.Helpers.GameObject;
 import com.zsoft.bullettutorial.MainGame;
 
+import java.util.AbstractList;
+import java.util.ArrayList;
+
 /**
  * Created by zac520 on 12/10/14.
  */
@@ -43,9 +47,9 @@ public class MainScreen implements Screen {
     ModelBatch modelBatch;
     Environment environment;
 
-    public float GROUND_WIDTH = 200;
-    public float GROUND_HEIGHT = 200;
-    public float GROUND_THICKNESS = 10f;
+    public float GROUND_WIDTH = 400;
+    public float GROUND_HEIGHT = 400;
+    public float GROUND_THICKNESS = 0.1f;
 
     public float MAZE_WALL_HEIGHT = 10f;
     public float MAZE_WALL_WIDTH = 10f;
@@ -74,6 +78,7 @@ public class MainScreen implements Screen {
 
 
     Model model;
+    Model squareModel;
     ModelInstance ground;
     ModelInstance ball;
     boolean collision;
@@ -85,6 +90,7 @@ public class MainScreen implements Screen {
     btDispatcher dispatcher;
 
     Array<GameObject> instances;
+    GameObject playerInstance;
     ArrayMap<String, GameObject.Constructor> constructors;
     float spawnTimer;
 
@@ -177,6 +183,8 @@ public class MainScreen implements Screen {
 
         createAllMazeWalls();
 
+        optimizeByMeshing();
+
         makePlayer();
 
         //debug drawing
@@ -204,6 +212,204 @@ public class MainScreen implements Screen {
         camController = new CameraInputController(cam);
         Gdx.input.setInputProcessor(new InputMultiplexer(userInterfaceStage, camController));
 
+    }
+
+    Mesh oneMesh;
+    Model myFinishedModel;
+    ModelInstance finishedInstance;
+    Mesh[] testMeshes;
+    Matrix4 []testTransforms;
+    private void optimizeByMeshing(){
+        //from http://www.badlogicgames.com/forum/viewtopic.php?f=11&t=10842&hilit=merge+3D&start=20
+        ArrayList<com.badlogic.gdx.graphics.Mesh> meshesToMerge = new ArrayList<com.badlogic.gdx.graphics.Mesh>();
+        ArrayList<Matrix4> transforms = new ArrayList<Matrix4>();
+        testMeshes = new Mesh[instances.size];
+        testTransforms = new Matrix4[instances.size];
+
+        for (int i = 0; i < instances.size; ++i)
+        {
+            ModelInstance mi = instances.get(i);
+            com.badlogic.gdx.graphics.Mesh mesh = mi.model.meshes.get(0);
+
+            if(mesh == null) continue;
+
+            meshesToMerge.add(mesh);
+            transforms.add(mi.transform);
+            testMeshes[i]= mesh;
+            testTransforms[i] = mi.transform;
+        }
+
+        oneMesh = mergeMeshes(meshesToMerge, transforms);
+        //oneMesh = Mesh.create(true, testMeshes,testTransforms);
+        myFinishedModel = convertMeshToModel("node1", oneMesh);
+
+        finishedInstance = new ModelInstance(myFinishedModel, "node1");
+
+
+    }
+
+    public Model convertMeshToModel(final String id, final Mesh mesh) {
+        ModelBuilder builder = new ModelBuilder();
+        builder.begin();
+        builder.part(id, mesh, GL20.GL_TRIANGLES, new Material());
+        return builder.end();
+    }
+
+    public static Mesh mergeMeshes(AbstractList<Mesh> meshes, AbstractList<Matrix4> transformations)
+    {
+        if(meshes.size() == 0) return null;
+
+        int vertexArrayTotalSize = 0;
+        int indexArrayTotalSize = 0;
+
+        VertexAttributes va = meshes.get(0).getVertexAttributes();
+        int vaA[] = new int [va.size()];
+        for(int i=0; i<va.size(); i++)
+        {
+            vaA[i] = va.get(i).usage;
+        }
+
+        for(int i=0; i<meshes.size(); i++)
+        {
+            Mesh mesh = meshes.get(i);
+            if(mesh.getVertexAttributes().size() != va.size())
+            {
+                meshes.set(i, copyMesh(mesh, true, false, vaA));
+            }
+
+            vertexArrayTotalSize += mesh.getNumVertices() * mesh.getVertexSize() / 4;
+            indexArrayTotalSize += mesh.getNumIndices();
+        }
+
+        final float vertices[] = new float[vertexArrayTotalSize];
+        final short indices[] = new short[indexArrayTotalSize];
+
+        int indexOffset = 0;
+        int vertexOffset = 0;
+        int vertexSizeOffset = 0;
+        int vertexSize = 0;
+
+        for(int i=0; i<meshes.size(); i++)
+        {
+            Mesh mesh = meshes.get(i);
+
+            int numIndices = mesh.getNumIndices();
+            int numVertices = mesh.getNumVertices();
+            vertexSize = mesh.getVertexSize() / 4;
+            int baseSize = numVertices * vertexSize;
+            VertexAttribute posAttr = mesh.getVertexAttribute(mesh.getVertexAttributes().get(0).usage);
+            int offset = posAttr.offset / 4;
+            int numComponents = posAttr.numComponents;
+
+            { //uzupelnianie tablicy indeksow
+                mesh.getIndices(indices, indexOffset);
+                for(int c = indexOffset; c < (indexOffset + numIndices); c++)
+                {
+                    indices[c] += vertexOffset;
+                }
+                indexOffset += numIndices;
+            }
+
+            mesh.getVertices(0, baseSize, vertices, vertexSizeOffset);
+            Mesh.transform(transformations.get(i), vertices, vertexSize, offset, numComponents, vertexOffset, numVertices);
+            vertexOffset += numVertices;
+            vertexSizeOffset += baseSize;
+        }
+
+        Mesh result = new Mesh(true, vertexOffset, indices.length, meshes.get(0).getVertexAttributes());
+        result.setVertices(vertices);
+        result.setIndices(indices);
+        return result;
+    }
+
+    public static Mesh copyMesh(Mesh meshToCopy, boolean isStatic, boolean removeDuplicates, final int[] usage) {
+        // TODO move this to a copy constructor?
+        // TODO duplicate the buffers without double copying the data if possible.
+        // TODO perhaps move this code to JNI if it turns out being too slow.
+        final int vertexSize = meshToCopy.getVertexSize() / 4;
+        int numVertices = meshToCopy.getNumVertices();
+        float[] vertices = new float[numVertices * vertexSize];
+        meshToCopy.getVertices(0, vertices.length, vertices);
+        short[] checks = null;
+        VertexAttribute[] attrs = null;
+        int newVertexSize = 0;
+        if (usage != null) {
+            int size = 0;
+            int as = 0;
+            for (int i = 0; i < usage.length; i++)
+                if (meshToCopy.getVertexAttribute(usage[i]) != null) {
+                    size += meshToCopy.getVertexAttribute(usage[i]).numComponents;
+                    as++;
+                }
+            if (size > 0) {
+                attrs = new VertexAttribute[as];
+                checks = new short[size];
+                int idx = -1;
+                int ai = -1;
+                for (int i = 0; i < usage.length; i++) {
+                    VertexAttribute a = meshToCopy.getVertexAttribute(usage[i]);
+                    if (a == null)
+                        continue;
+                    for (int j = 0; j < a.numComponents; j++)
+                        checks[++idx] = (short)(a.offset/4 + j);
+                    attrs[++ai] = new VertexAttribute(a.usage, a.numComponents, a.alias);
+                    newVertexSize += a.numComponents;
+                }
+            }
+        }
+        if (checks == null) {
+            checks = new short[vertexSize];
+            for (short i = 0; i < vertexSize; i++)
+                checks[i] = i;
+            newVertexSize = vertexSize;
+        }
+
+        int numIndices = meshToCopy.getNumIndices();
+        short[] indices = null;
+        if (numIndices > 0) {
+            indices = new short[numIndices];
+            meshToCopy.getIndices(indices);
+            if (removeDuplicates || newVertexSize != vertexSize) {
+                float[] tmp = new float[vertices.length];
+                int size = 0;
+                for (int i = 0; i < numIndices; i++) {
+                    final int idx1 = indices[i] * vertexSize;
+                    short newIndex = -1;
+                    if (removeDuplicates) {
+                        for (short j = 0; j < size && newIndex < 0; j++) {
+                            final int idx2 = j*newVertexSize;
+                            boolean found = true;
+                            for (int k = 0; k < checks.length && found; k++) {
+                                if (tmp[idx2+k] != vertices[idx1+checks[k]])
+                                    found = false;
+                            }
+                            if (found)
+                                newIndex = j;
+                        }
+                    }
+                    if (newIndex > 0)
+                        indices[i] = newIndex;
+                    else {
+                        final int idx = size * newVertexSize;
+                        for (int j = 0; j < checks.length; j++)
+                            tmp[idx+j] = vertices[idx1+checks[j]];
+                        indices[i] = (short)size;
+                        size++;
+                    }
+                }
+                vertices = tmp;
+                numVertices = size;
+            }
+        }
+
+        Mesh result;
+        if (attrs == null)
+            result = new Mesh(isStatic, numVertices, indices == null ? 0 : indices.length, meshToCopy.getVertexAttributes());
+        else
+            result = new Mesh(isStatic, numVertices, indices == null ? 0 : indices.length, attrs);
+        result.setVertices(vertices, 0, numVertices * newVertexSize);
+        result.setIndices(indices);
+        return result;
     }
 
     private void createAllMazeWalls(){
@@ -507,7 +713,7 @@ public class MainScreen implements Screen {
             object.transform.set(newTransform,
                     object.body.getOrientation());
             object.body.proceedToTransform(object.transform);//apply the change in position
-            object.center = newTransform;
+            //object.center = newTransform;
 
         }
         else {
@@ -523,7 +729,7 @@ public class MainScreen implements Screen {
                     object.body.getOrientation());
             object.body.proceedToTransform(object.transform);//apply the change in position
             object.center = object.model.calculateBoundingBox(bounds).getCenter(object.center);
-            object.center = newTransform;
+            //object.center = newTransform;
 
         }
 
@@ -540,16 +746,15 @@ public class MainScreen implements Screen {
         characterObject = constructors.get("capsule").construct();
         characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
         characterObject.transform.set(new Vector3(
-                originForHorizontalMazeWall.x,
+                originForHorizontalMazeWall.x*0,
                 20,
-                originForHorizontalMazeWall.y), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
+                originForHorizontalMazeWall.y*0), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
         characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
-        instances.add(characterObject);//renderable, but no physics
         characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
         characterObject.body.setFriction(1);
         characterObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
 
-        instances.add(characterObject);//renderable, but no physics
+        //instances.add(characterObject);//renderable, but no physics
         dynamicsWorld.addRigidBody(characterObject.body);//physics, but no render
     }
 
@@ -594,12 +799,11 @@ public class MainScreen implements Screen {
         constructors.put("sphere", new GameObject.Constructor(model, "sphere", new btSphereShape(0.5f), 1f));
         constructors.put("box", new GameObject.Constructor(model, "box", new btBoxShape(new Vector3(0.5f, 0.5f, 0.5f)), 1f));
         constructors.put("cone", new GameObject.Constructor(model, "cone", new btConeShape(0.5f, 2f), 1f));
-        constructors.put("capsule", new GameObject.Constructor(model, "capsule", new btCapsuleShape(PlAYER_RADIUS/2, PLAYER_HEIGHT/2), PLAYER_MASS));
+        constructors.put("capsule", new GameObject.Constructor(model, "capsule", new btCapsuleShape(PlAYER_RADIUS, PLAYER_HEIGHT/2), PLAYER_MASS));
         constructors.put("cylinder", new GameObject.Constructor(model, "cylinder", new btCylinderShape(new Vector3(.5f, 1f, .5f)), 1f));
-        constructors.put("square", new GameObject.Constructor(model, "square", new btBoxShape(new Vector3(MAZE_WALL_WIDTH/2, MAZE_WALL_HEIGHT/2, MAZE_WALL_THICKNESS/2)), 0f));
+        constructors.put("square", new GameObject.Constructor(squareModel, "square", new btBoxShape(new Vector3(MAZE_WALL_WIDTH/2, MAZE_WALL_HEIGHT/2, MAZE_WALL_THICKNESS/2)), 0f));
 
         instances = new Array<GameObject>();
-        instances.add(constructors.get("ground").construct());
     }
     private void defineModels(){
 
@@ -607,7 +811,7 @@ public class MainScreen implements Screen {
         ModelBuilder mb = new ModelBuilder();
         mb.begin();
         mb.node().id = "ground";
-        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.TEAL)))
+        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material())
                 .box(GROUND_WIDTH, GROUND_THICKNESS, GROUND_HEIGHT);
         mb.node().id = "sphere";
         mb.part("sphere", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.GREEN)))
@@ -619,7 +823,7 @@ public class MainScreen implements Screen {
         mb.part("cone", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.YELLOW)))
                 .cone(1f, 2f, 1f, 10);
         mb.node().id = "capsule";
-        mb.part("capsule", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.CYAN)))
+        mb.part("capsule", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal , new Material(ColorAttribute.createDiffuse(Color.CYAN)))
                 .capsule(PlAYER_RADIUS, PLAYER_HEIGHT, PLAYER_DIVISIONS);
 
         mb.node().id = "cylinder";
@@ -627,9 +831,15 @@ public class MainScreen implements Screen {
                 .cylinder(1f, 2f, 1f, 10);
 
         mb.node().id = "square";
-        mb.part("square", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.RED)))
-                .box(MAZE_WALL_WIDTH, MAZE_WALL_HEIGHT, MAZE_WALL_THICKNESS);
+
         model = mb.end();
+
+        ModelBuilder mb2 = new ModelBuilder();
+        mb2.begin();
+        mb2.part("square", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.RED)))
+                .box(MAZE_WALL_WIDTH, MAZE_WALL_HEIGHT, MAZE_WALL_THICKNESS);
+        squareModel = mb2.end();
+
     }
 
     private void makeWorld(){
@@ -651,18 +861,28 @@ public class MainScreen implements Screen {
         Gdx.gl.glClearColor(0.3f, 0.3f, 0.3f, 1.f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
 
+        //only draw the visible faces
+        Gdx.gl.glEnable(GL20.GL_CULL_FACE);
+
 
         //rendered drawing
         modelBatch.begin(cam);
         //modelBatch.render(instances, environment);
 
-        visibleCount = 0;
-        for (final GameObject instance : instances) {//only render if it is visible
-            if (instance.isVisible(cam,instance)) {
-                modelBatch.render(instance, environment);
-                visibleCount++;
-            }
-        }
+        //render everything visible but the player (because the player is dynamic, and the rest is static)
+//        visibleCount = 0;
+//        for (final GameObject instance : instances) {//only render if it is visible
+//            if (instance.isVisible(cam,instance)) {
+//                modelBatch.render(instance, environment);
+//                visibleCount++;
+//            }
+//        }
+
+
+        //render the player
+        modelBatch.render(finishedInstance, environment);
+        modelBatch.render(characterObject, environment);
+
         modelBatch.end();
 
         //debug drawing
