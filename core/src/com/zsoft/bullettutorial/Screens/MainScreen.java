@@ -42,7 +42,6 @@ import java.util.ArrayList;
  */
 public class MainScreen implements Screen {
 
-
     MainGame game;
 
     PerspectiveCamera cam;
@@ -78,7 +77,6 @@ public class MainScreen implements Screen {
     private int [][] horizontalMazeWalls;
 
     private BoundingBox bounds = new BoundingBox();
-
 
     Model model;
     Model squareModel;
