@@ -31,6 +31,7 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ArrayMap;
 import com.badlogic.gdx.utils.Disposable;
 import com.zsoft.bullettutorial.Helpers.GameObject;
+import com.zsoft.bullettutorial.Helpers.MeshMerger;
 import com.zsoft.bullettutorial.Helpers.MyRenderable;
 import com.zsoft.bullettutorial.MainGame;
 
@@ -44,11 +45,19 @@ public class MainScreen implements Screen {
 
     MainGame game;
 
+    /** Level setup vars**/
     PerspectiveCamera cam;
     CameraInputController camController;
     ModelBatch modelBatch;
     Environment environment;
+    DebugDrawer debugDrawer;
+    public float rotateAngle = 360f;
+    float angle,speed = 90f;
+    float visibleCount;
+    float spawnTimer;
 
+
+    /** Level sizing vars **/
     public float GROUND_WIDTH = 500;
     public float GROUND_HEIGHT = 500;
     public float GROUND_THICKNESS = 0.1f;
@@ -62,6 +71,9 @@ public class MainScreen implements Screen {
     public int PLAYER_DIVISIONS = 10;
     public float PLAYER_MASS = 1f;
 
+    public float MAX_VISIBLE_CAMERA_DISTANCE = 75f;
+
+    /**Maze calculation vars**/
     public int totalVisitedSquares;
     public int blocksHigh = (int) (GROUND_HEIGHT / MAZE_WALL_HEIGHT);
     public int blocksWide = (int) (GROUND_WIDTH / MAZE_WALL_HEIGHT);
@@ -72,84 +84,45 @@ public class MainScreen implements Screen {
     private int currentDistance;
     private int longestDistance;
     private Vector2 longestDistanceLocation;
-
     private int [][] verticalMazeWalls;
     private int [][] horizontalMazeWalls;
-
-    private BoundingBox bounds = new BoundingBox();
-
-    Model model;
-    Model squareModel;
-    ModelInstance ground;
-    ModelInstance ball;
-    boolean collision;
-    btCollisionShape groundShape;
-    btCollisionShape ballShape;
-    btCollisionObject groundObject;
-    btCollisionObject ballObject;
-    btCollisionConfiguration collisionConfig;
-    btDispatcher dispatcher;
-
-    Array<GameObject> instances;
-    GameObject playerInstance;
-    ArrayMap<String, GameObject.Constructor> constructors;
-    float spawnTimer;
-
-    MyContactListener contactListener;
-    btBroadphaseInterface broadphase;
-    btCollisionWorld collisionWorld;
-
-    final static short GROUND_FLAG = 1<<8;
-    final static short OBJECT_FLAG = 1<<9;
-    final static short ALL_FLAG = -1;
-
-    protected Stage stage;
-    protected Label label;
-    protected BitmapFont font;
-    private int visibleCount;
-    private Vector3 position = new Vector3();
-
-
-    btDynamicsWorld dynamicsWorld;
-    btConstraintSolver constraintSolver;
-
-    float angle, speed = 90f;
-
-
-    btGhostPairCallback ghostPairCallback;
-    btPairCachingGhostObject ghostObject;
-    btConvexShape ghostShape;
-    btKinematicCharacterController characterController;
-    Matrix4 characterTransform;
-    Vector3 characterDirection = new Vector3();
-    Vector3 walkDirection = new Vector3();
-    GameObject characterObject;
-    GameObject myGroundObject;
-    DebugDrawer debugDrawer;
-    private final Vector3 tmpV1 = new Vector3();
-
-    public float rotateAngle = 360f;
-
     private Vector3 originForVerticalMazeWall;
     private Vector3 originForHorizontalMazeWall;
 
-    protected StringBuilder stringBuilder;
-
-    HUD userInterfaceStage;
-    OrthographicCamera HUDCam;
-
+    /**Rendering Vars**/
+    Model model;
+    Model squareModel;
+    Array<GameObject> instances;
     private Texture texture;
-
     public Array<MyRenderable> renderables;
     public DefaultShader shader;
     public RenderContext renderContext;
-
     Mesh [][] meshes;
-    Model myFinishedModel;
-    ModelInstance finishedInstance;
     Mesh[] testMeshes;
     Matrix4 []testTransforms;
 
+    /**Bullet (physics) vars**/
+    ArrayMap<String, GameObject.Constructor> constructors;
+    btCollisionConfiguration collisionConfig;
+    btDispatcher dispatcher;
+    MyContactListener contactListener;
+    btBroadphaseInterface broadphase;
+    btCollisionWorld collisionWorld;
+    final static short GROUND_FLAG = 1<<8;
+    final static short OBJECT_FLAG = 1<<9;
+    final static short ALL_FLAG = -1;
+    GameObject characterObject;
+    GameObject myGroundObject;
+    btDynamicsWorld dynamicsWorld;
+    btConstraintSolver constraintSolver;
+
+    /**HUD vars**/
+    protected Stage stage;
+    protected Label label;
+    protected BitmapFont font;
+    protected StringBuilder stringBuilder;
+    HUD userInterfaceStage;
+    OrthographicCamera HUDCam;
 
 
     public MainScreen(MainGame myGame) {
@@ -158,6 +131,48 @@ public class MainScreen implements Screen {
 
         game = myGame;
 
+        setUpBasics();
+
+        //define the model's rendering shapes
+        defineModels();
+
+        //take those shapes, and give them physics by making a GameObject that includes both, and store into a map
+        applyModels();
+
+        //set up the 3d world
+        makeWorld();
+
+        //debug had to have the world already made, so belongs here.
+        setUpDebug();
+
+        //this is used to set the color of the objects when they hit the ground
+        contactListener = new MyContactListener();
+
+        //Make just the ground
+        instances = new Array<GameObject>();//initialize the renderables array before adding anything
+        makeGround();
+
+        //make a border around the maze
+        createMazeBorder();
+
+        //calculate the maze
+        visitedSquares = new int[blocksWide][blocksHigh];
+        zeroOutVisitedArray();
+        initializeMazeWallArrays();
+        createMazeWithoutRecursion();
+
+        //construct the calculated maze
+        createAllMazeWalls();
+
+        //merge all instances we can into fewer Renderables. This vastly improves processing.
+        optimizeByMeshing();
+
+        //create the player
+        makePlayer();
+
+    }
+
+    private void setUpBasics(){
         //renders the models
         modelBatch = new ModelBatch();
 
@@ -166,89 +181,50 @@ public class MainScreen implements Screen {
         environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.4f, 0.4f, 0.4f, 1f));
         environment.add(new DirectionalLight().set(0.8f, 0.8f, 0.8f, -1f, -0.8f, -0.2f));
 
-        //set up the camera
+        //set up the camera for the 3d stuff
         cam = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         cam.position.set(3f, 7f, 10f);
         cam.lookAt(0, 4f, 0);
-        cam.far = 75f;
+        cam.far = MAX_VISIBLE_CAMERA_DISTANCE;
         cam.update();
 
-
-
-
-        //set up the texture for the walls
-        FileHandle imageFileHandle = Gdx.files.internal("assets/concrete.jpg");
-        texture = new Texture(imageFileHandle);
-        texture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Nearest);
-        texture.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.Repeat);
-
-        defineModels();
-
-        applyModels();
-
-        makeWorld();
-
-
-
-
-        //this is used to set the color of the objects when they hit the ground
-        contactListener = new MyContactListener();
-
-
-        makeGround();
-
-        createMazeBorder();
-
-        //initialize the visited array
-        visitedSquares = new int[blocksWide][blocksHigh];
-        zeroOutVisitedArray();
-
-        initializeMazeWallArrays();
-
-        createMazeWithoutRecursion();
-
-        createAllMazeWalls();
-
-        optimizeByMeshing();
-
-        makePlayer();
-
-        //debug drawing
-        debugDrawer = new DebugDrawer();
-        debugDrawer.setDebugMode(btIDebugDraw.DebugDrawModes.DBG_MAX_DEBUG_DRAW_MODE);
-        dynamicsWorld.setDebugDrawer(debugDrawer);
-
-        //set up some stuff for the frustrum culling
-        stage = new Stage();
-        font = new BitmapFont();
-        label = new Label(" ", new Label.LabelStyle(font, Color.WHITE));
-        stage.addActor(label);
-        stringBuilder = new StringBuilder();
-
         //set up the UI cam with its own separate stage
-
         HUDCam =new OrthographicCamera();
         HUDCam.setToOrtho(false, game.SCREEN_WIDTH, game.SCREEN_HEIGHT);
         userInterfaceStage =new HUD(game, this);
-        //game.userInterfaceStage = userInterfaceStage;//we have to set it here because it needs a copy of this gamescreen
         userInterfaceStage.getViewport().setCamera(HUDCam);
-
 
         //allow for user control (user can fly the camera)
         camController = new CameraInputController(cam);
         Gdx.input.setInputProcessor(new InputMultiplexer(userInterfaceStage, camController));
 
+        //set up the texture for the walls
+        texture = new Texture(Gdx.files.internal("assets/concrete.jpg"));
+        texture.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.Repeat);
+    }
+    private void setUpDebug(){
+        //debug drawing
+        debugDrawer = new DebugDrawer();
+        debugDrawer.setDebugMode(btIDebugDraw.DebugDrawModes.DBG_MAX_DEBUG_DRAW_MODE);
+        dynamicsWorld.setDebugDrawer(debugDrawer);
 
-
+        //this is for the FPS, and the "visible instances" label. used for Debugging.
+        stage = new Stage();
+        font = new BitmapFont();
+        label = new Label(" ", new Label.LabelStyle(font, Color.WHITE));
+        stage.addActor(label);
+        stringBuilder = new StringBuilder();
     }
 
-
+    /** This class takes all of the instances (currently 2700 of them), and merges them into a 2d array of
+     * meshes. Each mesh is the size of the camera views. We then make a similar Renderable based on those meshes.
+     * Renderable has been extended into MyRenderable, so that we can store the bounding box. During rendering, we
+     * can check and see if any of this bounding box is visible to the camera, and only render if it is.
+     */
     private void optimizeByMeshing(){
         //from http://www.badlogicgames.com/forum/viewtopic.php?f=11&t=10842&hilit=merge+3D&start=20
         ArrayList<Mesh> meshesToMerge = new ArrayList<com.badlogic.gdx.graphics.Mesh>();
         ArrayList<Matrix4> transforms = new ArrayList<Matrix4>();
-        testMeshes = new Mesh[instances.size];
-        testTransforms = new Matrix4[instances.size];
 
         //we are going to divide the meshes into blocks of the size of cam.far. This we way will only render the meshes we can see
         float divisions = cam.far;
@@ -257,10 +233,11 @@ public class MainScreen implements Screen {
         float xMin = (GROUND_WIDTH/2);
         float yMin = (GROUND_HEIGHT/2);
 
+        //create an array of meshes
         meshes = new Mesh[(int)(GROUND_HEIGHT/divisions)+1][(int)(GROUND_WIDTH/divisions)+1];
 
         Array<Array<Array<GameObject>>> tempInstances = new Array<Array<Array<GameObject>>>();
-        //initialize the 3d array.
+        //initialize the 3d array. We have to do this because we ".get()" certain indexes later, and it needs something there.
         for(int x = 0; x< (int)(GROUND_HEIGHT/divisions)+1;x++){
             tempInstances.add(new Array<Array<GameObject>>());
             for(int y = 0; y<(int)(GROUND_WIDTH/divisions)+1; y++){
@@ -272,7 +249,6 @@ public class MainScreen implements Screen {
         Vector3 tempTransform = new Vector3();
         int xIndex;
         int yIndex;
-
         for(int x = 0; x<instances.size;x++){
             xIndex = (int) ((instances.get(x).transform.getTranslation(tempTransform).x + xMin) / divisions);
             yIndex = (int) ((instances.get(x).transform.getTranslation(tempTransform).z + yMin)/divisions);
@@ -284,6 +260,7 @@ public class MainScreen implements Screen {
         }
 
         //make an array of meshes of the size of the camera
+        MeshMerger meshMerger = new MeshMerger();
         for(int x = 0; x< tempInstances.size; x++){
             for(int y = 0; y<tempInstances.get(x).size;y++){
                 //create the array list of meshes and transforms
@@ -294,76 +271,39 @@ public class MainScreen implements Screen {
                     meshesToMerge.add(mesh);
                     transforms.add(mi.transform);
                 }
-                meshes[x][y]=mergeMeshes(meshesToMerge,transforms);
+                meshes[x][y]=meshMerger.mergeMeshes(meshesToMerge, transforms);
                 meshesToMerge.clear();
                 transforms.clear();
             }
-
-
         }
 
-//        for (int i = 0; i < instances.size; ++i)
-//        {
-//            ModelInstance mi = instances.get(i);
-//
-//            System.out.println("x: " + mi.transform.getTranslation(new Vector3()).x + "z: " + mi.transform.getTranslation(new Vector3()).z);
-//            com.badlogic.gdx.graphics.Mesh mesh = mi.model.meshes.get(0);
-//
-//            if(mesh == null) continue;
-//
-//            meshesToMerge.add(mesh);
-//
-//            transforms.add(mi.transform);
-//            testMeshes[i]= mesh;
-//            testTransforms[i] = mi.transform;
-//        }
-
-
-        Model tempModel = new Model();
-        ModelInstance tempInstance;
+        //create array of renderables based on above meshes
+        Model tempModel;
         renderables = new Array<MyRenderable>();
         for(int x = 0; x< meshes.length-1;x++){
             for(int y = 0; y<meshes[x].length-1;y++){
                 System.out.println("x: " + x + "y: "+ y);
                 tempModel = convertMeshToModel("node1", meshes[x][y]);
-                tempInstance = new ModelInstance(tempModel, "node1");
-                //set the texture
-                //set the texture up
                 NodePart blockPart = tempModel.getNode("node1").parts.get(0);
                 MyRenderable myTempRenderable = new MyRenderable();
                 blockPart.setRenderable(myTempRenderable);
                 myTempRenderable.boundingBox = myTempRenderable.mesh.calculateBoundingBox();
+
+                //apply the texture
                 myTempRenderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
+
                 myTempRenderable.environment = environment;
                 myTempRenderable.worldTransform.idt();
                 renderables.add(myTempRenderable);
-
-
                 //renderable.primitiveType = GL20.GL_POINTS;
 
             }
         }
+
+        //initialize the renderContext and shader
         renderContext = new RenderContext(new DefaultTextureBinder(DefaultTextureBinder.WEIGHTED, 1));
         shader = new DefaultShader(renderables.first());
         shader.init();
-        //meshes[0][0] = mergeMeshes(meshesToMerge, transforms);
-        //meshes[0][0] = Mesh.create(true, testMeshes,testTransforms);
-//        myFinishedModel = convertMeshToModel("node1", meshes[0][0]);
-//        finishedInstance = new ModelInstance(myFinishedModel, "node1");
-
-//        //set the texture
-//        //set the texture up
-//        NodePart blockPart = myFinishedModel.getNode("node1").parts.get(0);
-//        renderable = new MyRenderable();
-//        blockPart.setRenderable(renderable);
-//        renderable.boundingBox = renderable.mesh.calculateBoundingBox();
-//        renderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
-//        renderable.environment = environment;
-//        renderable.worldTransform.idt();
-//        renderContext = new RenderContext(new DefaultTextureBinder(DefaultTextureBinder.WEIGHTED, 1));
-//        shader = new DefaultShader(renderable);
-//        shader.init();
-//        //renderable.primitiveType = GL20.GL_POINTS;
     }
 
     public Model convertMeshToModel(final String id, final Mesh mesh) {
@@ -373,162 +313,6 @@ public class MainScreen implements Screen {
         return builder.end();
     }
 
-    public static Mesh mergeMeshes(AbstractList<Mesh> meshes, AbstractList<Matrix4> transformations)
-    {
-        if(meshes.size() == 0) return null;
-
-        int vertexArrayTotalSize = 0;
-        int indexArrayTotalSize = 0;
-
-        VertexAttributes va = meshes.get(0).getVertexAttributes();
-        int vaA[] = new int [va.size()];
-        for(int i=0; i<va.size(); i++)
-        {
-            vaA[i] = va.get(i).usage;
-        }
-
-        for(int i=0; i<meshes.size(); i++)
-        {
-            Mesh mesh = meshes.get(i);
-            if(mesh.getVertexAttributes().size() != va.size())
-            {
-                meshes.set(i, copyMesh(mesh, true, false, vaA));
-            }
-
-            vertexArrayTotalSize += mesh.getNumVertices() * mesh.getVertexSize() / 4;
-            indexArrayTotalSize += mesh.getNumIndices();
-        }
-
-        final float vertices[] = new float[vertexArrayTotalSize];
-        final short indices[] = new short[indexArrayTotalSize];
-
-        int indexOffset = 0;
-        int vertexOffset = 0;
-        int vertexSizeOffset = 0;
-        int vertexSize = 0;
-
-        for(int i=0; i<meshes.size(); i++)
-        {
-            Mesh mesh = meshes.get(i);
-
-            int numIndices = mesh.getNumIndices();
-            int numVertices = mesh.getNumVertices();
-            vertexSize = mesh.getVertexSize() / 4;
-            int baseSize = numVertices * vertexSize;
-            VertexAttribute posAttr = mesh.getVertexAttribute(mesh.getVertexAttributes().get(0).usage);
-            int offset = posAttr.offset / 4;
-            int numComponents = posAttr.numComponents;
-
-            { //uzupelnianie tablicy indeksow
-                mesh.getIndices(indices, indexOffset);
-                for(int c = indexOffset; c < (indexOffset + numIndices); c++)
-                {
-                    indices[c] += vertexOffset;
-                }
-                indexOffset += numIndices;
-            }
-
-            mesh.getVertices(0, baseSize, vertices, vertexSizeOffset);
-            Mesh.transform(transformations.get(i), vertices, vertexSize, offset, numComponents, vertexOffset, numVertices);
-            vertexOffset += numVertices;
-            vertexSizeOffset += baseSize;
-        }
-
-        Mesh result = new Mesh(true, vertexOffset, indices.length, meshes.get(0).getVertexAttributes());
-        result.setVertices(vertices);
-        result.setIndices(indices);
-        return result;
-    }
-
-    public static Mesh copyMesh(Mesh meshToCopy, boolean isStatic, boolean removeDuplicates, final int[] usage) {
-        // TODO move this to a copy constructor?
-        // TODO duplicate the buffers without double copying the data if possible.
-        // TODO perhaps move this code to JNI if it turns out being too slow.
-        final int vertexSize = meshToCopy.getVertexSize() / 4;
-        int numVertices = meshToCopy.getNumVertices();
-        float[] vertices = new float[numVertices * vertexSize];
-        meshToCopy.getVertices(0, vertices.length, vertices);
-        short[] checks = null;
-        VertexAttribute[] attrs = null;
-        int newVertexSize = 0;
-        if (usage != null) {
-            int size = 0;
-            int as = 0;
-            for (int i = 0; i < usage.length; i++)
-                if (meshToCopy.getVertexAttribute(usage[i]) != null) {
-                    size += meshToCopy.getVertexAttribute(usage[i]).numComponents;
-                    as++;
-                }
-            if (size > 0) {
-                attrs = new VertexAttribute[as];
-                checks = new short[size];
-                int idx = -1;
-                int ai = -1;
-                for (int i = 0; i < usage.length; i++) {
-                    VertexAttribute a = meshToCopy.getVertexAttribute(usage[i]);
-                    if (a == null)
-                        continue;
-                    for (int j = 0; j < a.numComponents; j++)
-                        checks[++idx] = (short)(a.offset/4 + j);
-                    attrs[++ai] = new VertexAttribute(a.usage, a.numComponents, a.alias);
-                    newVertexSize += a.numComponents;
-                }
-            }
-        }
-        if (checks == null) {
-            checks = new short[vertexSize];
-            for (short i = 0; i < vertexSize; i++)
-                checks[i] = i;
-            newVertexSize = vertexSize;
-        }
-
-        int numIndices = meshToCopy.getNumIndices();
-        short[] indices = null;
-        if (numIndices > 0) {
-            indices = new short[numIndices];
-            meshToCopy.getIndices(indices);
-            if (removeDuplicates || newVertexSize != vertexSize) {
-                float[] tmp = new float[vertices.length];
-                int size = 0;
-                for (int i = 0; i < numIndices; i++) {
-                    final int idx1 = indices[i] * vertexSize;
-                    short newIndex = -1;
-                    if (removeDuplicates) {
-                        for (short j = 0; j < size && newIndex < 0; j++) {
-                            final int idx2 = j*newVertexSize;
-                            boolean found = true;
-                            for (int k = 0; k < checks.length && found; k++) {
-                                if (tmp[idx2+k] != vertices[idx1+checks[k]])
-                                    found = false;
-                            }
-                            if (found)
-                                newIndex = j;
-                        }
-                    }
-                    if (newIndex > 0)
-                        indices[i] = newIndex;
-                    else {
-                        final int idx = size * newVertexSize;
-                        for (int j = 0; j < checks.length; j++)
-                            tmp[idx+j] = vertices[idx1+checks[j]];
-                        indices[i] = (short)size;
-                        size++;
-                    }
-                }
-                vertices = tmp;
-                numVertices = size;
-            }
-        }
-
-        Mesh result;
-        if (attrs == null)
-            result = new Mesh(isStatic, numVertices, indices == null ? 0 : indices.length, meshToCopy.getVertexAttributes());
-        else
-            result = new Mesh(isStatic, numVertices, indices == null ? 0 : indices.length, attrs);
-        result.setVertices(vertices, 0, numVertices * newVertexSize);
-        result.setIndices(indices);
-        return result;
-    }
 
     private void createAllMazeWalls(){
         for(int x = 0; x < horizontalMazeWalls.length; x++){
@@ -547,8 +331,6 @@ public class MainScreen implements Screen {
             }
         }
     }
-
-
 
     private void zeroOutVisitedArray(){
         //initialize the visited array
@@ -860,14 +642,10 @@ public class MainScreen implements Screen {
     }
 
     private void makePlayer(){
-        //create a cone character
-
-        Texture tex = new Texture(Gdx.files.internal("assets/badlogic.jpg"));
-        tex.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.ClampToEdge);
-
+        //create a capsule character
         characterObject = constructors.get("capsule").construct();
         characterObject.nodes.get(0).parts.get(0).material.clear();
-        characterObject.nodes.get(0).parts.get(0).material.set(new Material( new TextureAttribute(TextureAttribute.Ambient, tex)));
+        characterObject.nodes.get(0).parts.get(0).material.set(new Material());
 
         characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
         characterObject.transform.set(new Vector3(
@@ -885,19 +663,7 @@ public class MainScreen implements Screen {
     }
 
     private void makeGround(){
-        //static ground body
-//		instances = new Array<GameObject>();
-//		GameObject object = constructors.get("ground").construct();
-//		instances.add(object);
-//		//dynamicsWorld.addRigidBody(object.body, GROUND_FLAG, ALL_FLAG);
-//		dynamicsWorld.addRigidBody(object.body);
-//		object.body.setContactCallbackFlag(GROUND_FLAG);
-//		object.body.setContactCallbackFilter(0);
-
-        //kinematic ground body
-        instances = new Array<GameObject>();
         myGroundObject = constructors.get("ground").construct();
-
 //        object.body.setCollisionFlags(object.body.getCollisionFlags()
 //                | btCollisionObject.CollisionFlags.CF_KINEMATIC_OBJECT);
         instances.add(myGroundObject);
@@ -918,6 +684,11 @@ public class MainScreen implements Screen {
                 myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 + MAZE_WALL_HEIGHT/2 );
     }
 
+
+    /**
+     * This class takes the models we built earlier, and uses them to attach physical shapes to them, in the GameObject class.
+     * It is a map, so we can pull them up with just the string id.
+     */
     private void applyModels(){
         //apply those models and put them into a map
         constructors = new ArrayMap<String, GameObject.Constructor>(String.class, GameObject.Constructor.class);
@@ -928,9 +699,16 @@ public class MainScreen implements Screen {
         constructors.put("capsule", new GameObject.Constructor(model, "capsule", new btCapsuleShape(PlAYER_RADIUS, PLAYER_HEIGHT/2), PLAYER_MASS));
         constructors.put("cylinder", new GameObject.Constructor(model, "cylinder", new btCylinderShape(new Vector3(.5f, 1f, .5f)), 1f));
         constructors.put("square", new GameObject.Constructor(squareModel, "square", new btBoxShape(new Vector3(MAZE_WALL_WIDTH/2, MAZE_WALL_HEIGHT/2, MAZE_WALL_THICKNESS/2)), 0f));
-
-        instances = new Array<GameObject>();
     }
+
+    /**
+     * This is where we define the rendered models. I still have much learning to do here. The Usage areas currently
+     * allow us to determine position (Position), shading (Normal), and apply a texture (TextureCoordinates). This
+     * has become pretty tricky, and right now the texture coordinates are not working.
+     *
+     * Oddly, defining multiple nodes in the model lead to errors later when combining into a mesh. For now, we are just
+     * using several different models instead.
+     */
     private void defineModels(){
 
         //set a bunch of things the world will make randomly. These should be twice the size on each x, y, and z property we name for the constructor, due to bullet vs rendering dimensions
@@ -992,12 +770,12 @@ public class MainScreen implements Screen {
 
 
         //enable textures
-        //Gdx.gl20.glEnable(GL20.GL_TEXTURE_2D);
+        Gdx.gl20.glEnable(GL20.GL_TEXTURE_2D);
 
         //rendered drawing
         modelBatch.begin(cam);
-        //modelBatch.render(instances, environment);
 
+        //We will add dynamic stuff later, and this will again be useful. I think.
         //render everything visible but the player (because the player is dynamic, and the rest is static)
 //        visibleCount = 0;
 //        for (final GameObject instance : instances) {//only render if it is visible
@@ -1006,23 +784,19 @@ public class MainScreen implements Screen {
 //                visibleCount++;
 //            }
 //        }
-
-
         //render the player
-        //modelBatch.render(finishedInstance, environment);
         modelBatch.render(characterObject, environment);
 
         modelBatch.end();
 
-//        texture.bind();
-//        oneMesh.render(shader.program,0,3,3,true);
-
-
+        //render the level, but only the parts that are in view.
+        visibleCount = 0;
         renderContext.begin();
         shader.begin(cam, renderContext);
         for (final MyRenderable renderable : renderables) {
             if (cam.frustum.boundsInFrustum(renderable.boundingBox)) {
                 shader.render(renderable);
+                visibleCount++;
             }
         }
         shader.end();
@@ -1035,7 +809,7 @@ public class MainScreen implements Screen {
 
         final float myDelta = Math.min(1f / 30f, delta);
 
-        //move the ground
+        //move the ground up and down
 //        angle = (angle + myDelta * speed) % 360f;
 //        instances.get(0).transform.setTranslation(0, MathUtils.sinDeg(angle) * 2.5f, 0f);//activate TO MOVE BOX UP AND DOWN
 
@@ -1046,6 +820,7 @@ public class MainScreen implements Screen {
 
         dynamicsWorld.stepSimulation(myDelta, 5, 1f/60f);
 
+        //spawn crap in the middle
 //        if ((spawnTimer -= myDelta) < 0) {
 //            spawn();
 //            spawnTimer = 1.5f;
