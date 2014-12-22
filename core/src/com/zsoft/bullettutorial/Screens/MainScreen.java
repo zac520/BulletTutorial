@@ -49,8 +49,8 @@ public class MainScreen implements Screen {
     ModelBatch modelBatch;
     Environment environment;
 
-    public float GROUND_WIDTH = 400;
-    public float GROUND_HEIGHT = 400;
+    public float GROUND_WIDTH = 500;
+    public float GROUND_HEIGHT = 500;
     public float GROUND_THICKNESS = 0.1f;
 
     public float MAZE_WALL_HEIGHT = 10f;
@@ -145,6 +145,14 @@ public class MainScreen implements Screen {
     public DefaultShader shader;
     public RenderContext renderContext;
 
+    Mesh [][] meshes;
+    Model myFinishedModel;
+    ModelInstance finishedInstance;
+    Mesh[] testMeshes;
+    Matrix4 []testTransforms;
+
+
+
     public MainScreen(MainGame myGame) {
         //MUST init before we can use bullet
         Bullet.init();
@@ -163,6 +171,7 @@ public class MainScreen implements Screen {
         cam = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         cam.position.set(3f, 7f, 10f);
         cam.lookAt(0, 4f, 0);
+        cam.far = 100f;
         cam.update();
 
 
@@ -231,6 +240,93 @@ public class MainScreen implements Screen {
         Gdx.input.setInputProcessor(new InputMultiplexer(userInterfaceStage, camController));
 
 
+
+    }
+
+
+    private void optimizeByMeshing(){
+        //from http://www.badlogicgames.com/forum/viewtopic.php?f=11&t=10842&hilit=merge+3D&start=20
+        ArrayList<Mesh> meshesToMerge = new ArrayList<com.badlogic.gdx.graphics.Mesh>();
+        ArrayList<Matrix4> transforms = new ArrayList<Matrix4>();
+        testMeshes = new Mesh[instances.size];
+        testTransforms = new Matrix4[instances.size];
+
+        //we are going to divide the meshes into blocks of the size of cam.far. This we way will only render the meshes we can see
+        float divisions = cam.far;
+
+        //since the ground is at the origin, 0, a lot of values are negative. We will shift the locations so we can put into proper indexes
+        float xMin = (GROUND_WIDTH/2);
+        float yMin = (GROUND_HEIGHT/2);
+
+        meshes = new Mesh[(int)(GROUND_HEIGHT/divisions)+1][(int)(GROUND_WIDTH/divisions)+1];
+
+        Array<Array<Array<GameObject>>> tempInstances = new Array<Array<Array<GameObject>>>();
+        //initialize the 3d array.
+        for(int x = 0; x< (int)(GROUND_HEIGHT/divisions)+1;x++){
+            tempInstances.add(new Array<Array<GameObject>>());
+            for(int y = 0; y<(int)(GROUND_WIDTH/divisions)+1; y++){
+                tempInstances.get(x).add(new Array<GameObject>());
+            }
+        }
+
+        //sort the instances
+        Vector3 tempTransform = new Vector3();
+        int xIndex;
+        int yIndex;
+
+        for(int x = 0; x<instances.size;x++){
+            xIndex = (int) ((instances.get(x).transform.getTranslation(tempTransform).x + xMin) / divisions);
+            yIndex = (int) ((instances.get(x).transform.getTranslation(tempTransform).z + yMin)/divisions);
+            System.out.println(xIndex + "  " + yIndex);
+
+            //take the instance and put it into a findable index for later
+            tempInstances.get(xIndex)
+                    .get(yIndex)
+                    .add(instances.get(x));
+        }
+
+        for(int x = 0; x< tempInstances.size; x++){
+            for(int y = 0; y<tempInstances.get(x).size;y++){
+                //create the array list of meshes and transforms
+                for(int z = 0; z<tempInstances.get(x).get(y).size;z++) {
+                    ModelInstance mi = tempInstances.get(x).get(y).get(z);
+                    com.badlogic.gdx.graphics.Mesh mesh = mi.model.meshes.get(0);
+                    if (mesh == null) continue;
+                    meshesToMerge.add(mesh);
+                    transforms.add(mi.transform);
+                }
+                meshes[x][y]=mergeMeshes(meshesToMerge,transforms);
+                meshesToMerge.clear();
+                transforms.clear();
+            }
+
+
+        }
+
+//        for (int i = 0; i < instances.size; ++i)
+//        {
+//            ModelInstance mi = instances.get(i);
+//
+//            System.out.println("x: " + mi.transform.getTranslation(new Vector3()).x + "z: " + mi.transform.getTranslation(new Vector3()).z);
+//            com.badlogic.gdx.graphics.Mesh mesh = mi.model.meshes.get(0);
+//
+//            if(mesh == null) continue;
+//
+//            meshesToMerge.add(mesh);
+//
+//            transforms.add(mi.transform);
+//            testMeshes[i]= mesh;
+//            testTransforms[i] = mi.transform;
+//        }
+
+
+
+        //meshes[0][0] = mergeMeshes(meshesToMerge, transforms);
+        //meshes[0][0] = Mesh.create(true, testMeshes,testTransforms);
+        myFinishedModel = convertMeshToModel("node1", meshes[0][0]);
+        finishedInstance = new ModelInstance(myFinishedModel, "node1");
+
+        //set the texture
         //set the texture up
         NodePart blockPart = myFinishedModel.getNode("node1").parts.get(0);
         renderable = new Renderable();
@@ -242,44 +338,6 @@ public class MainScreen implements Screen {
         shader = new DefaultShader(renderable);
         shader.init();
         //renderable.primitiveType = GL20.GL_POINTS;
-    }
-
-    Mesh oneMesh;
-    Model myFinishedModel;
-    ModelInstance finishedInstance;
-    Mesh[] testMeshes;
-    Matrix4 []testTransforms;
-    private void optimizeByMeshing(){
-        //from http://www.badlogicgames.com/forum/viewtopic.php?f=11&t=10842&hilit=merge+3D&start=20
-        ArrayList<com.badlogic.gdx.graphics.Mesh> meshesToMerge = new ArrayList<com.badlogic.gdx.graphics.Mesh>();
-        ArrayList<Matrix4> transforms = new ArrayList<Matrix4>();
-        testMeshes = new Mesh[instances.size];
-        testTransforms = new Matrix4[instances.size];
-
-        for (int i = 0; i < instances.size; ++i)
-        {
-            ModelInstance mi = instances.get(i);
-            com.badlogic.gdx.graphics.Mesh mesh = mi.model.meshes.get(0);
-
-            if(mesh == null) continue;
-
-            meshesToMerge.add(mesh);
-            transforms.add(mi.transform);
-            testMeshes[i]= mesh;
-            testTransforms[i] = mi.transform;
-        }
-
-        oneMesh = mergeMeshes(meshesToMerge, transforms);
-        //oneMesh = Mesh.create(true, testMeshes,testTransforms);
-        myFinishedModel = convertMeshToModel("node1", oneMesh);
-
-        myFinishedModel.nodes.get(0).parts.get(0).material.clear();
-        myFinishedModel.nodes.get(0).parts.get(0).material.set(new TextureAttribute(TextureAttribute.Ambient, texture));
-        finishedInstance = new ModelInstance(myFinishedModel, "node1");
-
-        //set the texture
-        //finishedInstance.nodes.get(0).parts.get(0).material.set(new TextureAttribute(TextureAttribute.Ambient, texture));
-
     }
 
     public Model convertMeshToModel(final String id, final Mesh mesh) {
@@ -908,20 +966,20 @@ public class MainScreen implements Screen {
 
 
         //enable textures
-        Gdx.gl20.glEnable(GL20.GL_TEXTURE_2D);
+        //Gdx.gl20.glEnable(GL20.GL_TEXTURE_2D);
 
         //rendered drawing
         modelBatch.begin(cam);
         //modelBatch.render(instances, environment);
 
         //render everything visible but the player (because the player is dynamic, and the rest is static)
-//        visibleCount = 0;
-//        for (final GameObject instance : instances) {//only render if it is visible
-//            if (instance.isVisible(cam,instance)) {
-//                modelBatch.render(instance, environment);
-//                visibleCount++;
-//            }
-//        }
+        visibleCount = 0;
+        for (final GameObject instance : instances) {//only render if it is visible
+            if (instance.isVisible(cam,instance)) {
+                modelBatch.render(instance, environment);
+                visibleCount++;
+            }
+        }
 
 
         //render the player
