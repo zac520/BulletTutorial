@@ -43,19 +43,6 @@ import java.util.ArrayList;
  */
 public class MainScreen implements Screen {
 
-    MainGame game;
-
-    /** Level setup vars**/
-    PerspectiveCamera cam;
-    CameraInputController camController;
-    ModelBatch modelBatch;
-    Environment environment;
-    DebugDrawer debugDrawer;
-    public float rotateAngle = 360f;
-    float angle,speed = 90f;
-    float visibleCount;
-    float spawnTimer;
-
 
     /** Level sizing vars **/
     public float GROUND_WIDTH = 500;
@@ -72,6 +59,18 @@ public class MainScreen implements Screen {
     public float PLAYER_MASS = 1f;
 
     public float MAX_VISIBLE_CAMERA_DISTANCE = 75f;
+
+    /** Level setup vars**/
+    MainGame game;
+    PerspectiveCamera cam;
+    CameraInputController camController;
+    ModelBatch modelBatch;
+    Environment environment;
+    DebugDrawer debugDrawer;
+    public float rotateAngle = 360f;
+    float angle,speed = 90f;
+    float visibleCount;
+    float spawnTimer;
 
     /**Maze calculation vars**/
     public int totalVisitedSquares;
@@ -99,7 +98,7 @@ public class MainScreen implements Screen {
     public RenderContext renderContext;
     Mesh [][] meshes;
     Mesh[] testMeshes;
-    Matrix4 []testTransforms;
+
 
     /**Bullet (physics) vars**/
     ArrayMap<String, GameObject.Constructor> constructors;
@@ -113,6 +112,7 @@ public class MainScreen implements Screen {
     final static short ALL_FLAG = -1;
     GameObject characterObject;
     GameObject myGroundObject;
+    GameObject myCeilingObject;
     btDynamicsWorld dynamicsWorld;
     btConstraintSolver constraintSolver;
 
@@ -152,6 +152,9 @@ public class MainScreen implements Screen {
         instances = new Array<GameObject>();//initialize the renderables array before adding anything
         makeGround();
 
+        //make the ceiling
+        makeCeiling();
+
         //make a border around the maze
         createMazeBorder();
 
@@ -184,7 +187,7 @@ public class MainScreen implements Screen {
         //set up the camera for the 3d stuff
         cam = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         cam.position.set(3f, 7f, 10f);
-        cam.lookAt(0, 4f, 0);
+        cam.lookAt(0, 3f, 0);
         cam.far = MAX_VISIBLE_CAMERA_DISTANCE;
         cam.update();
 
@@ -233,14 +236,18 @@ public class MainScreen implements Screen {
         float xMin = (GROUND_WIDTH/2);
         float yMin = (GROUND_HEIGHT/2);
 
+        int xDivisions = (int)(GROUND_HEIGHT/divisions)+1;
+        xDivisions*=2;
+        int yDivisions = (int)(GROUND_WIDTH/divisions)+1;
+        yDivisions*=2;
         //create an array of meshes
-        meshes = new Mesh[(int)(GROUND_HEIGHT/divisions)+1][(int)(GROUND_WIDTH/divisions)+1];
+        meshes = new Mesh[xDivisions][yDivisions];
 
         Array<Array<Array<GameObject>>> tempInstances = new Array<Array<Array<GameObject>>>();
         //initialize the 3d array. We have to do this because we ".get()" certain indexes later, and it needs something there.
-        for(int x = 0; x< (int)(GROUND_HEIGHT/divisions)+1;x++){
+        for(int x = 0; x< xDivisions;x++){
             tempInstances.add(new Array<Array<GameObject>>());
-            for(int y = 0; y<(int)(GROUND_WIDTH/divisions)+1; y++){
+            for(int y = 0; y<yDivisions; y++){
                 tempInstances.get(x).add(new Array<GameObject>());
             }
         }
@@ -280,9 +287,11 @@ public class MainScreen implements Screen {
         //create array of renderables based on above meshes
         Model tempModel;
         renderables = new Array<MyRenderable>();
-        for(int x = 0; x< meshes.length-1;x++){
-            for(int y = 0; y<meshes[x].length-1;y++){
-                System.out.println("x: " + x + "y: "+ y);
+        for(int x = 0; x< meshes.length;x++){
+            for(int y = 0; y<meshes[x].length;y++){
+                if(meshes[x][y]==null){
+                    continue;
+                }
                 tempModel = convertMeshToModel("node1", meshes[x][y]);
                 NodePart blockPart = tempModel.getNode("node1").parts.get(0);
                 MyRenderable myTempRenderable = new MyRenderable();
@@ -290,7 +299,8 @@ public class MainScreen implements Screen {
                 myTempRenderable.boundingBox = myTempRenderable.mesh.calculateBoundingBox();
 
                 //apply the texture
-                myTempRenderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
+                texture.setWrap(Texture.TextureWrap.MirroredRepeat, Texture.TextureWrap.Repeat);
+                myTempRenderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture) );
 
                 myTempRenderable.environment = environment;
                 myTempRenderable.worldTransform.idt();
@@ -649,9 +659,9 @@ public class MainScreen implements Screen {
 
         characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
         characterObject.transform.set(new Vector3(
-                originForHorizontalMazeWall.x*0,
-                20,
-                originForHorizontalMazeWall.y*0), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
+                originForHorizontalMazeWall.x + MAZE_WALL_WIDTH/2,
+                2,
+                originForHorizontalMazeWall.z + MAZE_WALL_WIDTH/2), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
         characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
         characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
         characterObject.body.setFriction(1);
@@ -664,7 +674,9 @@ public class MainScreen implements Screen {
 
     private void makeGround(){
         myGroundObject = constructors.get("ground").construct();
-//        object.body.setCollisionFlags(object.body.getCollisionFlags()
+//        myGroundObject.materials.first().set(TextureAttribute.createDiffuse(texture));
+
+        //        object.body.setCollisionFlags(object.body.getCollisionFlags()
 //                | btCollisionObject.CollisionFlags.CF_KINEMATIC_OBJECT);
         instances.add(myGroundObject);
         dynamicsWorld.addRigidBody(myGroundObject.body);
@@ -684,6 +696,22 @@ public class MainScreen implements Screen {
                 myGroundObject.body.getCenterOfMassPosition().z-GROUND_HEIGHT/2 + MAZE_WALL_HEIGHT/2 );
     }
 
+    private void makeCeiling(){
+        myCeilingObject = constructors.get("ground").construct();
+//        myCeilingObject.materials.first().set(TextureAttribute.createDiffuse(texture));
+        instances.add(myCeilingObject);
+
+        //        object.body.setCollisionFlags(object.body.getCollisionFlags()
+//                | btCollisionObject.CollisionFlags.CF_KINEMATIC_OBJECT);
+        dynamicsWorld.addRigidBody(myCeilingObject.body);
+        myCeilingObject.body.setContactCallbackFlag(GROUND_FLAG);
+        myCeilingObject.body.setContactCallbackFilter(0);
+        myCeilingObject.transform.set(new Vector3(
+                myCeilingObject.body.getCenterOfMassPosition().x,
+                MAZE_WALL_HEIGHT,
+                myCeilingObject.body.getCenterOfMassPosition().x), myCeilingObject.body.getOrientation());//set it to start at 15 so it falls to ground
+        myCeilingObject.body.proceedToTransform(myCeilingObject.transform);//apply the change in position
+    }
 
     /**
      * This class takes the models we built earlier, and uses them to attach physical shapes to them, in the GameObject class.
@@ -715,8 +743,13 @@ public class MainScreen implements Screen {
         ModelBuilder mb = new ModelBuilder();
         mb.begin();
         mb.node().id = "ground";
-        mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal | VertexAttributes.Usage.TextureCoordinates, new Material())
-                .box(GROUND_WIDTH, GROUND_THICKNESS, GROUND_HEIGHT);
+        MeshPartBuilder mpb = mb.part("ground", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position
+                | VertexAttributes.Usage.Normal
+                | VertexAttributes.Usage.TextureCoordinates, new Material());
+
+        mpb.setUVRange(0, 0, GROUND_WIDTH/MAZE_WALL_WIDTH, GROUND_HEIGHT/MAZE_WALL_HEIGHT);//set how the texture can repeat
+        mpb.box(GROUND_WIDTH, GROUND_THICKNESS, GROUND_HEIGHT);
+
 //        mb.node().id = "sphere";
 //        mb.part("sphere", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.GREEN)))
 //                .sphere(1f, 1f, 1f, 10, 10);
@@ -786,6 +819,13 @@ public class MainScreen implements Screen {
 //        }
         //render the player
         modelBatch.render(characterObject, environment);
+
+        //render the ground separately so we can control the texture wrapping.
+        //modelBatch.render(myGroundObject,environment);
+
+        //render the ceiling
+        //modelBatch.render(myCeilingObject,environment);
+
 
         modelBatch.end();
 
@@ -917,9 +957,10 @@ public class MainScreen implements Screen {
 
     public void centerPlayerOnScreen(){
 
-        int camDistanceFromPlayer = 5;
+        float camDistanceFromPlayer = 3f;
         //TODO for now this is static. We want the user to be able to zoom. We need to override and use the automatic camera controls and add in something to calculate current zoom
 
+        //cam.lookAt(characterObject.transform.getTranslation(new Vector3()));
         cam.position.set(
                 characterObject.body.getCenterOfMassPosition().x - cam.direction.x * camDistanceFromPlayer,
                 characterObject.body.getCenterOfMassPosition().y - cam.direction.y * camDistanceFromPlayer,
@@ -995,7 +1036,5 @@ public class MainScreen implements Screen {
     public void show() {
 
     }
-
-
     @Override public void resize (int width, int height) {}
 }

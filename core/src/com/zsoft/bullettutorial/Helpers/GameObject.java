@@ -54,6 +54,7 @@ public class GameObject extends ModelInstance implements Disposable {
 
     }
 
+
     @Override
     public void dispose () {
         body.dispose();
