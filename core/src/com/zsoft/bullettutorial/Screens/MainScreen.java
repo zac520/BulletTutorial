@@ -31,6 +31,7 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ArrayMap;
 import com.badlogic.gdx.utils.Disposable;
 import com.zsoft.bullettutorial.Helpers.GameObject;
+import com.zsoft.bullettutorial.Helpers.MyRenderable;
 import com.zsoft.bullettutorial.MainGame;
 
 import java.util.AbstractList;
@@ -141,7 +142,7 @@ public class MainScreen implements Screen {
 
     private Texture texture;
 
-    public Renderable renderable;
+    public Array<MyRenderable> renderables;
     public DefaultShader shader;
     public RenderContext renderContext;
 
@@ -171,7 +172,7 @@ public class MainScreen implements Screen {
         cam = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         cam.position.set(3f, 7f, 10f);
         cam.lookAt(0, 4f, 0);
-        cam.far = 100f;
+        cam.far = 75f;
         cam.update();
 
 
@@ -277,7 +278,6 @@ public class MainScreen implements Screen {
         for(int x = 0; x<instances.size;x++){
             xIndex = (int) ((instances.get(x).transform.getTranslation(tempTransform).x + xMin) / divisions);
             yIndex = (int) ((instances.get(x).transform.getTranslation(tempTransform).z + yMin)/divisions);
-            System.out.println(xIndex + "  " + yIndex);
 
             //take the instance and put it into a findable index for later
             tempInstances.get(xIndex)
@@ -285,6 +285,7 @@ public class MainScreen implements Screen {
                     .add(instances.get(x));
         }
 
+        //make an array of meshes of the size of the camera
         for(int x = 0; x< tempInstances.size; x++){
             for(int y = 0; y<tempInstances.get(x).size;y++){
                 //create the array list of meshes and transforms
@@ -320,24 +321,51 @@ public class MainScreen implements Screen {
 //        }
 
 
+        Model tempModel = new Model();
+        ModelInstance tempInstance;
+        renderables = new Array<MyRenderable>();
+        for(int x = 0; x< meshes.length-1;x++){
+            for(int y = 0; y<meshes[x].length-1;y++){
+                System.out.println("x: " + x + "y: "+ y);
+                tempModel = convertMeshToModel("node1", meshes[x][y]);
+                tempInstance = new ModelInstance(tempModel, "node1");
+                //set the texture
+                //set the texture up
+                NodePart blockPart = tempModel.getNode("node1").parts.get(0);
+                MyRenderable myTempRenderable = new MyRenderable();
+                blockPart.setRenderable(myTempRenderable);
+                myTempRenderable.boundingBox = myTempRenderable.mesh.calculateBoundingBox();
+                myTempRenderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
+                myTempRenderable.environment = environment;
+                myTempRenderable.worldTransform.idt();
+                renderables.add(myTempRenderable);
 
+
+                //renderable.primitiveType = GL20.GL_POINTS;
+
+            }
+        }
+        renderContext = new RenderContext(new DefaultTextureBinder(DefaultTextureBinder.WEIGHTED, 1));
+        shader = new DefaultShader(renderables.first());
+        shader.init();
         //meshes[0][0] = mergeMeshes(meshesToMerge, transforms);
         //meshes[0][0] = Mesh.create(true, testMeshes,testTransforms);
-        myFinishedModel = convertMeshToModel("node1", meshes[0][0]);
-        finishedInstance = new ModelInstance(myFinishedModel, "node1");
+//        myFinishedModel = convertMeshToModel("node1", meshes[0][0]);
+//        finishedInstance = new ModelInstance(myFinishedModel, "node1");
 
-        //set the texture
-        //set the texture up
-        NodePart blockPart = myFinishedModel.getNode("node1").parts.get(0);
-        renderable = new Renderable();
-        blockPart.setRenderable(renderable);
-        renderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
-        renderable.environment = environment;
-        renderable.worldTransform.idt();
-        renderContext = new RenderContext(new DefaultTextureBinder(DefaultTextureBinder.WEIGHTED, 1));
-        shader = new DefaultShader(renderable);
-        shader.init();
-        //renderable.primitiveType = GL20.GL_POINTS;
+//        //set the texture
+//        //set the texture up
+//        NodePart blockPart = myFinishedModel.getNode("node1").parts.get(0);
+//        renderable = new MyRenderable();
+//        blockPart.setRenderable(renderable);
+//        renderable.boundingBox = renderable.mesh.calculateBoundingBox();
+//        renderable.material = new Material( new TextureAttribute(TextureAttribute.Diffuse, texture));
+//        renderable.environment = environment;
+//        renderable.worldTransform.idt();
+//        renderContext = new RenderContext(new DefaultTextureBinder(DefaultTextureBinder.WEIGHTED, 1));
+//        shader = new DefaultShader(renderable);
+//        shader.init();
+//        //renderable.primitiveType = GL20.GL_POINTS;
     }
 
     public Model convertMeshToModel(final String id, final Mesh mesh) {
@@ -973,13 +1001,13 @@ public class MainScreen implements Screen {
         //modelBatch.render(instances, environment);
 
         //render everything visible but the player (because the player is dynamic, and the rest is static)
-        visibleCount = 0;
-        for (final GameObject instance : instances) {//only render if it is visible
-            if (instance.isVisible(cam,instance)) {
-                modelBatch.render(instance, environment);
-                visibleCount++;
-            }
-        }
+//        visibleCount = 0;
+//        for (final GameObject instance : instances) {//only render if it is visible
+//            if (instance.isVisible(cam,instance)) {
+//                modelBatch.render(instance, environment);
+//                visibleCount++;
+//            }
+//        }
 
 
         //render the player
@@ -994,7 +1022,11 @@ public class MainScreen implements Screen {
 
         renderContext.begin();
         shader.begin(cam, renderContext);
-        shader.render(renderable);
+        for (final MyRenderable renderable : renderables) {
+            if (cam.frustum.boundsInFrustum(renderable.boundingBox)) {
+                shader.render(renderable);
+            }
+        }
         shader.end();
         renderContext.end();
 
