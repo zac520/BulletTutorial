@@ -27,6 +27,7 @@ import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.utils.*;
 import com.badlogic.gdx.utils.StringBuilder;
+import com.zsoft.bullettutorial.Actors.PlayerActor;
 import com.zsoft.bullettutorial.Helpers.GameObject;
 import com.zsoft.bullettutorial.Helpers.MeshMerger;
 import com.zsoft.bullettutorial.Helpers.MyRenderable;
@@ -100,6 +101,10 @@ public class MainScreen implements Screen {
     Mesh[] testMeshes;
 
 
+    /**Actors**/
+    PlayerActor myPlayer;
+
+
     /**Bullet (physics) vars**/
     ArrayMap<String, GameObject.Constructor> constructors;
     btCollisionConfiguration collisionConfig;
@@ -171,28 +176,58 @@ public class MainScreen implements Screen {
         optimizeByMeshing();
 
         //create the player
-        makePlayer();
+        //makePlayer();
 
         //temp
-        testImportAnimatedModel();
+        makeBetterPlayer();
     }
 
-    private void testImportAnimatedModel(){
+    private void makePlayer(){
+        //create a capsule character
+        characterObject = constructors.get("capsule").construct();
+        characterObject.nodes.get(0).parts.get(0).material.clear();
+        characterObject.nodes.get(0).parts.get(0).material.set(new Material());
+
+        characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
+        characterObject.transform.set(new Vector3(
+                (originForHorizontalMazeWall.x + MAZE_WALL_WIDTH/2)*0 +5,
+                2,
+                (originForHorizontalMazeWall.z + MAZE_WALL_WIDTH/2)*0 +5), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
+        characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
+        characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
+        characterObject.body.setFriction(1);
+        characterObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+
+
+        //instances.add(characterObject);//renderable, but no physics
+        dynamicsWorld.addRigidBody(characterObject.body);//physics, but no render
+
+
+    }
+    private void makeBetterPlayer(){
         // Model loader needs a binary json reader to decode
         JsonReader jsonReader = new JsonReader();
         // Create a model loader passing in our json reader
         G3dModelLoader modelLoader = new G3dModelLoader(jsonReader);
         // Now load the model by name
         // Note, the model (g3db file ) and textures need to be added to the assets folder of the Android proj
-        characterModel = modelLoader.loadModel(Gdx.files.getFileHandle("assets/GusWalks.g3dj", Files.FileType.Internal));
-        // Now create an instance.  Instance holds the positioning data, etc of an instance of your model
-        characterInstance = new ModelInstance(characterModel);
+        characterModel = modelLoader.loadModel(Gdx.files.getFileHandle("assets/GusWalks2.g3dj", Files.FileType.Internal));
+
+        btCapsuleShape characterPhysicsShape =  new btCapsuleShape(PlAYER_RADIUS, PLAYER_HEIGHT/2);
+        myPlayer = new PlayerActor(characterModel,"Gus",characterPhysicsShape, PLAYER_MASS);
+
         //fbx-conv is supposed to perform this rotation for you... it doesnt seem to
-        characterInstance.transform.rotate(1, 0, 0, -90);
-        //move the model down a bit on the screen ( in a z-up world, down is -z ).
-        characterInstance.transform.translate(3, 3, 4);
+        myPlayer.transform.rotate(1, 0, 0, -90);//pick his face off the ground
+        //rotate to face away from camera
+        myPlayer.transform.rotate(0,0,1,180);
+
+        //move the model down a bit on the screen ( in a z-up world, down is -z ) and to a new location.
+        myPlayer.transform.translate(3, 3, 4);
+
+        //scale the player
+
         // You use an AnimationController to um, control animations.  Each control is tied to the model instance
-        animationController = new AnimationController(characterInstance);
+        animationController = new AnimationController(myPlayer);
         // Pick the current animation by name
         animationController.setAnimation("ArmatureAction",1, new AnimationController.AnimationListener(){
 
@@ -212,6 +247,16 @@ public class MainScreen implements Screen {
             }
 
         });
+
+        myPlayer.body.setCollisionFlags(myPlayer.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
+
+        myPlayer.body.proceedToTransform(myPlayer.transform);//apply the change in position
+        myPlayer.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
+        myPlayer.body.setFriction(1);
+        myPlayer.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
+
+        //instances.add(characterObject);//renderable, but no physics
+        dynamicsWorld.addRigidBody(myPlayer.body);//physics, but no render
 
     }
     private void setUpBasics(){
@@ -690,26 +735,6 @@ public class MainScreen implements Screen {
         dynamicsWorld.addRigidBody(object.body);
     }
 
-    private void makePlayer(){
-        //create a capsule character
-        characterObject = constructors.get("capsule").construct();
-        characterObject.nodes.get(0).parts.get(0).material.clear();
-        characterObject.nodes.get(0).parts.get(0).material.set(new Material());
-
-        characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
-        characterObject.transform.set(new Vector3(
-                (originForHorizontalMazeWall.x + MAZE_WALL_WIDTH/2)*0 +5,
-                2,
-                (originForHorizontalMazeWall.z + MAZE_WALL_WIDTH/2)*0 +5), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
-        characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
-        characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
-        characterObject.body.setFriction(1);
-        characterObject.body.setActivationState(Collision.DISABLE_DEACTIVATION);//make it not sleepable
-
-
-        //instances.add(characterObject);//renderable, but no physics
-        dynamicsWorld.addRigidBody(characterObject.body);//physics, but no render
-    }
 
     private void makeGround(){
         myGroundObject = constructors.get("ground").construct();
@@ -786,9 +811,8 @@ public class MainScreen implements Screen {
                 | VertexAttributes.Usage.Normal
                 | VertexAttributes.Usage.TextureCoordinates, new Material());
 
-        mpb.setUVRange(0, 0, GROUND_WIDTH/MAZE_WALL_WIDTH, GROUND_HEIGHT/MAZE_WALL_HEIGHT);//set how the texture can repeat
+        mpb.setUVRange(0, 0, GROUND_WIDTH / MAZE_WALL_WIDTH, GROUND_HEIGHT / MAZE_WALL_HEIGHT);//set how the texture can repeat
         mpb.box(GROUND_WIDTH, GROUND_THICKNESS, GROUND_HEIGHT);
-
 //        mb.node().id = "sphere";
 //        mb.part("sphere", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.GREEN)))
 //                .sphere(1f, 1f, 1f, 10, 10);
@@ -801,7 +825,6 @@ public class MainScreen implements Screen {
         mb.node().id = "capsule";
         mb.part("capsule", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal | VertexAttributes.Usage.TextureCoordinates , new Material(ColorAttribute.createDiffuse(Color.CYAN)))
                 .capsule(PlAYER_RADIUS, PLAYER_HEIGHT, PLAYER_DIVISIONS);
-
 //        mb.node().id = "cylinder";
 //        mb.part("cylinder", GL20.GL_TRIANGLES, VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal, new Material(ColorAttribute.createDiffuse(Color.MAGENTA)))
 //                .cylinder(1f, 2f, 1f, 10);
@@ -860,10 +883,10 @@ public class MainScreen implements Screen {
 //            }
 //        }
         //render the player
-        modelBatch.render(characterObject, environment);
+        //modelBatch.render(characterObject, environment);
 
         //render the test player model
-        modelBatch.render(characterInstance, environment);
+        modelBatch.render(myPlayer, environment);
 
 
         //render the ground separately so we can control the texture wrapping.
@@ -904,6 +927,8 @@ public class MainScreen implements Screen {
 
         centerPlayerOnScreen();
 
+        rotatePlayerAwayFromCamera(cam);
+
         dynamicsWorld.stepSimulation(myDelta, 5, 1f/60f);
 
         //spawn crap in the middle
@@ -937,24 +962,24 @@ public class MainScreen implements Screen {
         if (Gdx.input.isKeyPressed(Input.Keys.SPACE)) {
 
 
-            characterObject.body.applyCentralForce(new Vector3(
-                    characterObject.body.getAngularVelocity().x,
+            myPlayer.body.applyCentralForce(new Vector3(
+                    myPlayer.body.getAngularVelocity().x,
                     50,
-                    characterObject.body.getAngularVelocity().y));
+                    myPlayer.body.getAngularVelocity().y));
         }
 
         if (Gdx.input.isKeyPressed(Input.Keys.UP)) {
+            if(myPlayer.getForwardSpeed() < myPlayer.MAX_SPEED) {
+                //get the angles we are facing
+                xDirection = cam.direction.x;
+                zDirection = cam.direction.z;
 
-            //get the angles we are facing
-            xDirection = cam.direction.x;
-            zDirection = cam.direction.z;
-
-            //apply the force to the character
-            characterObject.body.applyCentralForce(new Vector3(
-                    characterObject.body.getAngularVelocity().x + xDirection*40,
-                    characterObject.body.getAngularVelocity().z,
-                    characterObject.body.getAngularVelocity().y + zDirection*40));
-
+                //apply the force to the character
+                myPlayer.body.applyCentralForce(new Vector3(
+                         xDirection * 40,
+                        myPlayer.body.getAngularVelocity().z,
+                        zDirection * 40));
+            }
             //move the camera appropriately
             //centerPlayerOnScreen();
 
@@ -962,42 +987,48 @@ public class MainScreen implements Screen {
         }
         if (Gdx.input.isKeyPressed(Input.Keys.DOWN)) {
 
-            //get the angles we are facing
-            xDirection = -cam.direction.x;
-            zDirection = -cam.direction.z;
+            if(myPlayer.getForwardSpeed() < myPlayer.MAX_SPEED) {
 
-            //apply the force to the character
-            characterObject.body.applyCentralForce(new Vector3(
-                    characterObject.body.getAngularVelocity().x + xDirection*40,
-                    characterObject.body.getAngularVelocity().z,
-                    characterObject.body.getAngularVelocity().y + zDirection*40));
+                //get the angles we are facing
+                xDirection = -cam.direction.x;
+                zDirection = -cam.direction.z;
 
+                //apply the force to the character
+
+                myPlayer.body.applyCentralForce(new Vector3(
+                        myPlayer.body.getAngularVelocity().x + xDirection * 40,
+                        myPlayer.body.getAngularVelocity().z,
+                        myPlayer.body.getAngularVelocity().y + zDirection * 40));
+            }
             //move the camera appropriately
             //centerPlayerOnScreen();
 
         }
         if (Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
 
-            cam.rotateAround(characterObject.body.getCenterOfMassPosition(), Vector3.Y, 0.005f * rotateAngle);
+            cam.rotateAround(myPlayer.body.getCenterOfMassPosition(), Vector3.Y, 0.005f * rotateAngle);
             cam.update();
         }
         if (Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
 
-            cam.rotateAround(characterObject.body.getCenterOfMassPosition(), Vector3.Y, -0.005f * rotateAngle);
+            cam.rotateAround(myPlayer.body.getCenterOfMassPosition(), Vector3.Y, -0.005f * rotateAngle);
             cam.update();
         }
 
         //this is temporary. Another class will edit this.
         if(forward){
-            //get the angles we are facing
-            xDirection = cam.direction.x;
-            zDirection = cam.direction.z;
+            if(myPlayer.getForwardSpeed() < myPlayer.MAX_SPEED) {
 
-            //apply the force to the character
-            characterObject.body.applyCentralForce(new Vector3(
-                    characterObject.body.getAngularVelocity().x + xDirection*40,
-                    characterObject.body.getAngularVelocity().z,
-                    characterObject.body.getAngularVelocity().y + zDirection*40));
+                //get the angles we are facing
+                xDirection = cam.direction.x;
+                zDirection = cam.direction.z;
+
+                //apply the force to the character
+                myPlayer.body.applyCentralForce(new Vector3(
+                        xDirection * 40,
+                        0,
+                        zDirection * 40));
+            }
         }
     }
 
@@ -1008,11 +1039,20 @@ public class MainScreen implements Screen {
 
         //cam.lookAt(characterObject.transform.getTranslation(new Vector3()));
         cam.position.set(
-                characterObject.body.getCenterOfMassPosition().x - cam.direction.x * camDistanceFromPlayer,
-                characterObject.body.getCenterOfMassPosition().y - cam.direction.y * camDistanceFromPlayer,
-                characterObject.body.getCenterOfMassPosition().z - cam.direction.z * camDistanceFromPlayer
+                myPlayer.body.getCenterOfMassPosition().x - cam.direction.x * camDistanceFromPlayer,
+                myPlayer.body.getCenterOfMassPosition().y - cam.direction.y * camDistanceFromPlayer,
+                myPlayer.body.getCenterOfMassPosition().z - cam.direction.z * camDistanceFromPlayer
                 );
         cam.update();
+    }
+    public void rotatePlayerAwayFromCamera(PerspectiveCamera proCam){
+
+//        myPlayer.body.setAngularVelocity(new Vector3(0,1,0));//this works, but seems like an odd workaround
+//        myPlayer.body.proceedToTransform(myPlayer.transform);//apply the change in position
+
+//        myPlayer.transform.rotate(0,0,1,1);
+//        myPlayer.body.proceedToTransform(myPlayer.transform);//apply the change in position
+
     }
 
     public void spawn () {
