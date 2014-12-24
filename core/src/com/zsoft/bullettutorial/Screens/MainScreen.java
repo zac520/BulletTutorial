@@ -1,9 +1,6 @@
 package com.zsoft.bullettutorial.Screens;
 
-import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.Input;
-import com.badlogic.gdx.InputMultiplexer;
-import com.badlogic.gdx.Screen;
+import com.badlogic.gdx.*;
 import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
@@ -11,6 +8,7 @@ import com.badlogic.gdx.graphics.g3d.*;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
+import com.badlogic.gdx.graphics.g3d.loader.G3dModelLoader;
 import com.badlogic.gdx.graphics.g3d.model.NodePart;
 import com.badlogic.gdx.graphics.g3d.shaders.DefaultShader;
 import com.badlogic.gdx.graphics.g3d.utils.*;
@@ -27,9 +25,8 @@ import com.badlogic.gdx.physics.bullet.linearmath.btIDebugDraw;
 import com.badlogic.gdx.physics.bullet.linearmath.btMotionState;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
-import com.badlogic.gdx.utils.Array;
-import com.badlogic.gdx.utils.ArrayMap;
-import com.badlogic.gdx.utils.Disposable;
+import com.badlogic.gdx.utils.*;
+import com.badlogic.gdx.utils.StringBuilder;
 import com.zsoft.bullettutorial.Helpers.GameObject;
 import com.zsoft.bullettutorial.Helpers.MeshMerger;
 import com.zsoft.bullettutorial.Helpers.MyRenderable;
@@ -90,6 +87,9 @@ public class MainScreen implements Screen {
 
     /**Rendering Vars**/
     Model model;
+    private Model characterModel;
+    private AnimationController animationController;
+    private ModelInstance characterInstance;
     Model squareModel;
     Array<GameObject> instances;
     private Texture texture;
@@ -153,7 +153,7 @@ public class MainScreen implements Screen {
         makeGround();
 
         //make the ceiling
-        makeCeiling();
+        //makeCeiling();
 
         //make a border around the maze
         createMazeBorder();
@@ -173,8 +173,47 @@ public class MainScreen implements Screen {
         //create the player
         makePlayer();
 
+        //temp
+        testImportAnimatedModel();
     }
 
+    private void testImportAnimatedModel(){
+        // Model loader needs a binary json reader to decode
+        JsonReader jsonReader = new JsonReader();
+        // Create a model loader passing in our json reader
+        G3dModelLoader modelLoader = new G3dModelLoader(jsonReader);
+        // Now load the model by name
+        // Note, the model (g3db file ) and textures need to be added to the assets folder of the Android proj
+        characterModel = modelLoader.loadModel(Gdx.files.getFileHandle("assets/GusWalks.g3dj", Files.FileType.Internal));
+        // Now create an instance.  Instance holds the positioning data, etc of an instance of your model
+        characterInstance = new ModelInstance(characterModel);
+        //fbx-conv is supposed to perform this rotation for you... it doesnt seem to
+        characterInstance.transform.rotate(1, 0, 0, -90);
+        //move the model down a bit on the screen ( in a z-up world, down is -z ).
+        characterInstance.transform.translate(3, 3, 4);
+        // You use an AnimationController to um, control animations.  Each control is tied to the model instance
+        animationController = new AnimationController(characterInstance);
+        // Pick the current animation by name
+        animationController.setAnimation("ArmatureAction",1, new AnimationController.AnimationListener(){
+
+
+            @Override
+            public void onEnd(AnimationController.AnimationDesc animation) {
+                // this will be called when the current animation is done.
+                // queue up another animation called "balloon".
+                // Passing a negative to loop count loops forever.  1f for speed is normal speed.
+                animationController.queue("ArmatureAction",-1,1f,null,0f);
+            }
+
+            @Override
+            public void onLoop(AnimationController.AnimationDesc animation) {
+                // TODO Auto-generated method stub
+
+            }
+
+        });
+
+    }
     private void setUpBasics(){
         //renders the models
         modelBatch = new ModelBatch();
@@ -659,9 +698,9 @@ public class MainScreen implements Screen {
 
         characterObject.body.setCollisionFlags(characterObject.body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_CHARACTER_OBJECT);
         characterObject.transform.set(new Vector3(
-                originForHorizontalMazeWall.x + MAZE_WALL_WIDTH/2,
+                (originForHorizontalMazeWall.x + MAZE_WALL_WIDTH/2)*0 +5,
                 2,
-                originForHorizontalMazeWall.z + MAZE_WALL_WIDTH/2), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
+                (originForHorizontalMazeWall.z + MAZE_WALL_WIDTH/2)*0 +5), characterObject.body.getOrientation());//set it to start at 15 so it falls to ground
         characterObject.body.proceedToTransform(characterObject.transform);//apply the change in position
         characterObject.body.setAngularFactor(new Vector3(0, 0, 0));   //make it so it can't tip over
         characterObject.body.setFriction(1);
@@ -805,6 +844,9 @@ public class MainScreen implements Screen {
         //enable textures
         Gdx.gl20.glEnable(GL20.GL_TEXTURE_2D);
 
+        // You need to call update on the animation controller so it will advance the animation.  Pass in frame delta
+        animationController.update(Gdx.graphics.getDeltaTime());
+
         //rendered drawing
         modelBatch.begin(cam);
 
@@ -819,6 +861,10 @@ public class MainScreen implements Screen {
 //        }
         //render the player
         modelBatch.render(characterObject, environment);
+
+        //render the test player model
+        modelBatch.render(characterInstance, environment);
+
 
         //render the ground separately so we can control the texture wrapping.
         //modelBatch.render(myGroundObject,environment);
